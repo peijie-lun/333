@@ -32,13 +32,17 @@ export default async function handler(req, res) {
       await Promise.all(events.map(async (event) => {
         if (event.type === 'message' && event.message.type === 'text') {
           // 儲存訊息到 Supabase
-          await supabase.from('messages').insert([
+          const { error } = await supabase.from('messages').insert([
             {
               user_id: event.source.userId,
               message: event.message.text,
               timestamp: new Date().toISOString(),
             },
           ]);
+
+          if (error) {
+            console.error('Supabase insert error:', error);
+          }
 
           // 回覆訊息
           await client.replyMessage(event.replyToken, {
