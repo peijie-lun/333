@@ -1,4 +1,5 @@
 import { Client } from '@line/bot-sdk';
+import { supabase } from '../../lib/supabaseClient';
 
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -7,7 +8,6 @@ const lineConfig = {
 
 const client = new Client(lineConfig);
 
-// ✅ Next.js API Route 設定
 export const config = {
   api: {
     bodyParser: false,
@@ -31,6 +31,16 @@ export default async function handler(req, res) {
 
       await Promise.all(events.map(async (event) => {
         if (event.type === 'message' && event.message.type === 'text') {
+          // 儲存訊息到 Supabase
+          await supabase.from('messages').insert([
+            {
+              user_id: event.source.userId,
+              message: event.message.text,
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+
+          // 回覆訊息
           await client.replyMessage(event.replyToken, {
             type: 'text',
             text: `你說的是：${event.message.text}`,
@@ -45,5 +55,3 @@ export default async function handler(req, res) {
     }
   });
 }
-
-// Trigger redeploy
