@@ -35,8 +35,8 @@ export default async function handler(req, res) {
           const { error } = await supabase.from('messages').insert([
             {
               user_id: event.source.userId,
-              message: event.message.text,
-              timestamp: new Date().toISOString(),
+              text: event.message.text,
+              created_at: new Date().toISOString(),
             },
           ]);
 
