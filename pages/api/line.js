@@ -44,11 +44,13 @@ export default async function handler(req, res) {
             console.error('Supabase insert error:', error);
           }
 
-          // 回覆訊息
-          await client.replyMessage(event.replyToken, {
-            type: 'text',
-            text: `你說的是：${event.message.text}`,
-          });
+          // 回覆訊息（修正為陣列格式）
+          await client.replyMessage(event.replyToken, [
+            {
+              type: 'text',
+              text: `你說的是：${event.message.text}`,
+            },
+          ]);
         }
       }));
 
