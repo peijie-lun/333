@@ -18,7 +18,7 @@ fs.watch(dataDir, { recursive: false }, (eventType, filename) => {
     // 防止重複觸發
     clearTimeout(timer);
     timer = setTimeout(runBuild, 500);
-  }
+  }    
 });
 
 console.log('正在監控 data 資料夾，檔案有變動會自動執行 build_embeddings.js');
