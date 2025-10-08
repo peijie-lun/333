@@ -31,17 +31,15 @@ export default async function handler(req, res) {
 
       await Promise.all(events.map(async (event) => {
         if (event.type === 'message' && event.message.type === 'text') {
-          const userId = event.source.userId;
           const userText = event.message.text.trim();
           const replyToken = event.replyToken;
 
           let replyMessage = '';
 
           if (userText === '公告') {
-            // 查詢最新公告
             const { data, error } = await supabase
               .from('announcements')
-              .select('title, content, time')
+              .select('title, content')
               .eq('status', 'published')
               .order('time', { ascending: false })
               .limit(1);
@@ -53,27 +51,12 @@ export default async function handler(req, res) {
               replyMessage = '目前沒有公告。';
             } else {
               const announcement = data[0];
-              const formattedTime = new Date(announcement.time).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
-              replyMessage = `📢 ${announcement.title}\n${announcement.content}\n🕒 發布時間：${formattedTime}`;
+              replyMessage = `📢 ${announcement.title}\n${announcement.content}`;
             }
           } else {
-            // 儲存使用者訊息到 messages 表格
-            const { error } = await supabase.from('messages').insert([
-              {
-                user_id: userId,
-                text: userText,
-                created_at: new Date(event.timestamp).toISOString(),
-              },
-            ]);
-
-            if (error) {
-              console.error('Supabase insert error:', error);
-            }
-
             replyMessage = `你說的是：${userText}`;
           }
 
-          // 回覆訊息
           await client.replyMessage(replyToken, [
             {
               type: 'text',
@@ -90,4 +73,3 @@ export default async function handler(req, res) {
     }
   });
 }
-
