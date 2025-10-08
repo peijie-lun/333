@@ -18,7 +18,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const cachePath = path.join(__dirname, 'supabase_embeddings.json');
-
+    
 function getEmbedding(text) {
 	const py = spawnSync('python', [__dirname + '/embedding.py', text], { encoding: 'utf-8' });
 	if (py.error || py.status !== 0) return null;
