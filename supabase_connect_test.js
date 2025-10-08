@@ -20,7 +20,7 @@ async function testConnection() {
   if (error) {
     console.error('Supabase 連線失敗:', error);
   } else {
-    console.log('Supabase 連線成功！');
+    console.log('Supabase 連線成功！');    
   }
 }
 

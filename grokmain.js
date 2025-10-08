@@ -19,7 +19,7 @@ async function getEmbedding(text) {
     const py = spawnSync('python', [__dirname + '/embedding.py', text], { encoding: 'utf-8' });
     if (py.error) {
       console.error('執行 Python 失敗:', py.error);
-      return null;
+      return null;    
     }
     if (py.status !== 0) {
       console.error('Python embedding.py 執行錯誤:', py.stderr);
