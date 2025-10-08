@@ -31,24 +31,38 @@ export default async function handler(req, res) {
 
       await Promise.all(events.map(async (event) => {
         if (event.type === 'message' && event.message.type === 'text') {
-          // 儲存訊息到 Supabase
-          const { error } = await supabase.from('messages').insert([
-            {
-              user_id: event.source.userId,
-              text: event.message.text,
-              created_at: new Date().toISOString(),
-            },
-          ]);
+          const userText = event.message.text.trim();
+          const replyToken = event.replyToken;
 
-          if (error) {
-            console.error('Supabase insert error:', error);
+          let replyMessage = '';
+
+          if (userText === '公告') {
+            const { data, error } = await supabase
+              .from('announcements')
+              .select('title, content')
+              .eq('status', 'published')
+              .order('time', { ascending: false })
+              .limit(1);
+
+            if (error) {
+              console.error('Supabase query error:', error);
+              replyMessage = '取得公告時發生錯誤，請稍後再試。';
+            } else if (data.length === 0) {
+              replyMessage = '目前沒有公告。';
+            } else {
+              const announcement = data[0];
+              replyMessage = `📢 ${announcement.title}\n${announcement.content}`;
+            }
+          } else {
+            replyMessage = `你說的是：${userText}`;
           }
 
-          // 回覆訊息
-          await client.replyMessage(event.replyToken, {
-            type: 'text',
-            text: `你說的是：${event.message.text}`,
-          });
+          await client.replyMessage(replyToken, [
+            {
+              type: 'text',
+              text: replyMessage,
+            },
+          ]);
         }
       }));
 
