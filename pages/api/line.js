@@ -47,12 +47,15 @@ export default async function handler(req, res) {
           replyMessage = '查詢失敗，請稍後再試。';
         }
 
-        await client.replyMessage(replyToken, [
-          {
-            type: 'text',
-            text: replyMessage,
-          },
-        ]);
+        // 確保訊息不是空字串
+        if (replyMessage && replyToken) {
+          await client.replyMessage(replyToken, [
+            {
+              type: 'text',
+              text: replyMessage,
+            },
+          ]);
+        }
       }
     }));
 
