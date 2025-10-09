@@ -35,7 +35,7 @@ export default async function handler(req, res) {
         let replyMessage = '';
 
         try {
-          const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/llm`, {
+          const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: userText }),
