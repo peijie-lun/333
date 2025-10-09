@@ -17,47 +17,19 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { data: chunks, error } = await supabase
-      .from('embeddings')
-      .select('content, embedding');
+    // 直接抓全部 knowledge 資料
+    const { data: knowledge, error } = await supabase
+      .from('knowledge')
+      .select('content');
 
-    if (error) {
+    if (error || !knowledge || knowledge.length === 0) {
       console.error('Supabase 查詢錯誤:', error);
-      res.status(500).json({ error: '無法取得 embedding 資料' });
+      res.status(500).json({ error: '無法取得知識資料' });
       return;
     }
 
-    if (!chunks || chunks.length === 0) {
-      console.warn('Supabase 沒有取得任何資料');
-      res.status(500).json({ error: '無法取得 embedding 資料' });
-      return;
-    }
-
-    console.log('取得的 chunks 數量:', chunks.length);
-
-    const queryEmbedding = new Array(chunks[0].embedding.length).fill(0.5);
-
-    function cosineSimilarity(a, b) {
-      const dot = a.reduce((sum, v, i) => sum + v * b[i], 0);
-      const normA = Math.sqrt(a.reduce((sum, v) => sum + v * v, 0));
-      const normB = Math.sqrt(b.reduce((sum, v) => sum + v * v, 0));
-      return dot / (normA * normB);
-    }
-
-    const scored = chunks.map(chunk => ({
-      chunk,
-      sim: cosineSimilarity(queryEmbedding, chunk.embedding),
-    }));
-
-    scored.sort((a, b) => b.sim - a.sim);
-    const top3 = scored.slice(0, 3);
-    const mostRelevantChunk = top3[0]?.chunk;
-
-    if (!mostRelevantChunk || !mostRelevantChunk.content) {
-      console.warn('找不到最相關的 chunk');
-      res.status(500).json({ error: '無法取得有效的參考資料' });
-      return;
-    }
+    // 將所有 content 合併成一段參考資料
+    const referenceText = knowledge.map(k => k.content).join('\n\n');
 
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -70,7 +42,7 @@ export default async function handler(req, res) {
           },
           {
             role: 'user',
-            content: `問題：${query}\n\n參考資料：${mostRelevantChunk.content}`,
+            content: `問題：${query}\n\n參考資料：${referenceText}`,
           },
         ],
       },
@@ -81,12 +53,9 @@ export default async function handler(req, res) {
       }
     );
 
-    console.log('GROQ 回應:', response.data);
-
     const answer = response.data?.choices?.[0]?.message?.content?.trim();
 
     if (!answer) {
-      console.warn('GROQ 回傳空內容');
       res.status(200).json({ answer: '查詢失敗，請稍後再試。' });
       return;
     }
