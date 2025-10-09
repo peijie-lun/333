@@ -1,4 +1,5 @@
 import { Client } from '@line/bot-sdk';
+import { generateAnswer } from '../../lib/grokmain'; // 假設你已將 grokmain.js 改成模組
 import { supabase } from '../../lib/supabaseClient';
 
 const lineConfig = {
@@ -36,6 +37,7 @@ export default async function handler(req, res) {
 
           let replyMessage = '';
 
+          // 如果是「公告」就查 Supabase
           if (userText === '公告') {
             const { data, error } = await supabase
               .from('announcements')
@@ -54,7 +56,8 @@ export default async function handler(req, res) {
               replyMessage = `📢 ${announcement.title}\n${announcement.content}`;
             }
           } else {
-            replyMessage = `你說的是：${userText}`;
+            // 呼叫 LLM 查詢
+            replyMessage = await generateAnswer(userText) || '查詢失敗，請稍後再試。';
           }
 
           await client.replyMessage(replyToken, [
