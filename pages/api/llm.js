@@ -1,7 +1,5 @@
-// /pages/api/llm.js
 import axios from 'axios';
-import fs from 'fs';
-import path from 'path';
+import { supabase } from '../../lib/supabaseClient';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL;
@@ -19,15 +17,17 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 讀取快取資料
-    const cachePath = path.join(process.cwd(), 'supabase_embeddings.json');
-    const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-    const contextChunks = Object.values(cache);
+    const { data: chunks, error } = await supabase
+      .from('embeddings')
+      .select('content, embedding');
 
-    // 模擬 embedding（這裡你可以改成用 Supabase 或其他 API）
-    const queryEmbedding = new Array(contextChunks[0].embedding.length).fill(0.5); // 假資料
+    if (error || !chunks || chunks.length === 0) {
+      res.status(500).json({ error: '無法取得 embedding 資料' });
+      return;
+    }
 
-    // 計算相似度
+    const queryEmbedding = new Array(chunks[0].embedding.length).fill(0.5);
+
     function cosineSimilarity(a, b) {
       const dot = a.reduce((sum, v, i) => sum + v * b[i], 0);
       const normA = Math.sqrt(a.reduce((sum, v) => sum + v * v, 0));
@@ -35,7 +35,7 @@ export default async function handler(req, res) {
       return dot / (normA * normB);
     }
 
-    const scored = contextChunks.map(chunk => ({
+    const scored = chunks.map(chunk => ({
       chunk,
       sim: cosineSimilarity(queryEmbedding, chunk.embedding),
     }));
@@ -43,7 +43,6 @@ export default async function handler(req, res) {
     const top3 = scored.slice(0, 3);
     const mostRelevantChunk = top3[0].chunk;
 
-    // 呼叫 Groq API
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
@@ -72,4 +71,3 @@ export default async function handler(req, res) {
     console.error('LLM API error:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
-}
