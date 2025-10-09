@@ -43,7 +43,7 @@ export default async function handler(req, res) {
     const top3 = scored.slice(0, 3);
     const mostRelevantChunk = top3[0].chunk;
 
-    const response = await axios.post(
+    const response = await axios.post(   
       'https://api.groq.com/openai/v1/chat/completions',
       {
         model: GROQ_MODEL,
