@@ -42,26 +42,29 @@ export default async function handler(req, res) {
           });
 
           const result = await response.json();
-          replyMessage = result.answer?.trim() || '查詢失敗，請稍後再試。';
+          replyMessage = typeof result.answer === 'string' && result.answer.trim()
+            ? result.answer.trim()
+            : '查詢失敗，請稍後再試。';
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
           replyMessage = '查詢失敗，請稍後再試。';
         }
 
         // 防止空訊息導致 LINE API 回傳 400
-        if (replyMessage && replyToken) {
+        if (typeof replyMessage === 'string' && replyMessage.trim() !== '' && replyToken) {
           try {
-            await client.replyMessage(replyToken, [
-              {
-                type: 'text',
-                text: replyMessage,
-              },
-            ]);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: replyMessage,
+            });
           } catch (err) {
             console.error('LINE 回覆訊息失敗:', err);
           }
         } else {
-          console.warn('無效的 replyMessage 或 replyToken，略過回覆。');
+          console.warn('無效的 replyMessage 或 replyToken，略過回覆。', {
+            replyMessage,
+            replyToken,
+          });
         }
       }
     }
