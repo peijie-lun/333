@@ -1,5 +1,5 @@
 import { Client } from '@line/bot-sdk';
-import { generateAnswer } from '../../lib/grokmain'; // 假設你已將 grokmain.js 改成模組
+import { generateAnswer } from '../../lib/grokmain.js';
 import { supabase } from '../../lib/supabaseClient';
 
 const lineConfig = {
