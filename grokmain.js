@@ -89,7 +89,7 @@ async function generateAnswer(query) {
   let mostRelevantChunk = top3[0].chunk;
   let maxSim = top3[0].sim;
   // fallback: 若最高分低於 0.6，則用關鍵字比對
-  if (maxSim < 0.7) {
+  if (maxSim < 0.8) {
     // 斷詞：每個中文字、英數詞都單獨拆分，並產生 n-gram
     const words = query.match(/[\u4e00-\u9fa5]|\w+/g) || [];
     let ngrams = [];
@@ -158,4 +158,4 @@ async function generateAnswer(query) {
 }
 
 // 查詢
-generateAnswer('可不可以養寵物?');
+generateAnswer('公告');
