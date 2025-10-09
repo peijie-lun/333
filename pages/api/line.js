@@ -4,4 +4,4 @@ const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/llm`, {
   body: JSON.stringify({ query: userText }),
 });
 const result = await response.json();
-replyMessage = result.answer || '查詢失敗，請稍後再試。';
+replyMessage = result.answer || '查詢失敗，請稍後再試。';        
