@@ -32,6 +32,113 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
+        // ✅ 使用者輸入「最新公告」時回覆輪播卡片
+        if (userText === '最新公告') {
+          const carouselMessage = {
+            type: 'flex',
+            altText: '📢 社區多則公告',
+            contents: {
+              type: 'carousel',
+              contents: [
+                {
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: 'https://i.imgur.com/your-image1.jpg',
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      {
+                        type: 'text',
+                        text: '📢 清潔日通知',
+                        weight: 'bold',
+                        size: 'xl',
+                        color: '#1DB446'
+                      },
+                      {
+                        type: 'text',
+                        text: '🗓️ 2025/10/28\n🕒 上午 9:00 - 12:00\n📍 社區中庭',
+                        wrap: true,
+                        size: 'sm',
+                        color: '#555555'
+                      }
+                    ]
+                  },
+                  footer: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      {
+                        type: 'button',
+                        style: 'primary',
+                        action: {
+                          type: 'uri',
+                          label: '查看詳情',
+                          uri: 'https://example.com/notice1'
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: 'https://i.imgur.com/your-image2.jpg',
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      {
+                        type: 'text',
+                        text: '🎉 中秋晚會',
+                        weight: 'bold',
+                        size: 'xl',
+                        color: '#FF6F00'
+                      },
+                      {
+                        type: 'text',
+                        text: '🗓️ 2025/10/30\n🕒 晚上 6:00\n📍 社區廣場',
+                        wrap: true,
+                        size: 'sm',
+                        color: '#555555'
+                      }
+                    ]
+                  },
+                  footer: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      {
+                        type: 'button',
+                        style: 'primary',
+                        action: {
+                          type: 'uri',
+                          label: '活動詳情',
+                          uri: 'https://example.com/notice2'
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          };
+
+          await client.replyMessage(replyToken, carouselMessage);
+          continue;
+        }
+
+        // ✅ 原本的 LLM 查詢邏輯
         let replyMessage = '';
 
         try {
@@ -50,7 +157,6 @@ export default async function handler(req, res) {
           replyMessage = '查詢失敗，請稍後再試。';
         }
 
-        // 防止空訊息導致 LINE API 回傳 400
         if (typeof replyMessage === 'string' && replyMessage.trim() !== '' && replyToken) {
           try {
             await client.replyMessage(replyToken, {
@@ -74,4 +180,4 @@ export default async function handler(req, res) {
     console.error('Webhook error:', err);
     res.status(500).end();
   }
-}          
+}
