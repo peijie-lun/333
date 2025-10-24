@@ -32,8 +32,73 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        let replyMessage = '';
+        // ✅ 新增：社區公告 Flex Message 回覆
+        if (userText === '社區公告') {
+          const flexMessage = {
+            type: 'flex',
+            altText: '📢 社區公告：清潔日通知',
+            contents: {
+              type: 'bubble',
+              hero: {
+                type: 'image',
+                url: 'https://i.imgur.com/your-image.jpg', // 可換成你社區的圖片
+                size: 'full',
+                aspectRatio: '20:13',
+                aspectMode: 'cover'
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'md',
+                contents: [
+                  {
+                    type: 'text',
+                    text: '📢 社區清潔日通知',
+                    weight: 'bold',
+                    size: 'xl',
+                    color: '#1DB446'
+                  },
+                  {
+                    type: 'text',
+                    text: '🗓️ 日期：2025/10/28\n🕒 時間：上午 9:00 - 12:00\n📍 地點：社區中庭',
+                    wrap: true,
+                    color: '#555555',
+                    size: 'sm'
+                  },
+                  {
+                    type: 'text',
+                    text: '請住戶準時參與，共同維護社區環境。',
+                    wrap: true,
+                    margin: 'md'
+                  }
+                ]
+              },
+              footer: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'sm',
+                contents: [
+                  {
+                    type: 'button',
+                    style: 'primary',
+                    color: '#1DB446',
+                    action: {
+                      type: 'uri',
+                      label: '查看詳細公告',
+                      uri: 'https://example.com/announcement'
+                    }
+                  }
+                ]
+              }
+            }
+          };
 
+          await client.replyMessage(replyToken, flexMessage);
+          continue; // 跳過後續 LLM 查詢
+        }
+
+        // ✅ 原本的 LLM 查詢邏輯
+        let replyMessage = '';
         try {
           const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
             method: 'POST',
@@ -50,7 +115,6 @@ export default async function handler(req, res) {
           replyMessage = '查詢失敗，請稍後再試。';
         }
 
-        // 防止空訊息導致 LINE API 回傳 400
         if (typeof replyMessage === 'string' && replyMessage.trim() !== '' && replyToken) {
           try {
             await client.replyMessage(replyToken, {
@@ -74,4 +138,4 @@ export default async function handler(req, res) {
     console.error('Webhook error:', err);
     res.status(500).end();
   }
-}         
+}
