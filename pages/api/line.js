@@ -13,7 +13,7 @@ export const config = {
   },
 };
 
-export default async function handler(req, res) {
+export default async function handler(req, res) {       
   if (req.method !== 'POST') {
     res.status(405).send('Method Not Allowed');
     return;
@@ -26,6 +26,10 @@ export default async function handler(req, res) {
     }
     const body = Buffer.concat(buffers).toString();
     const events = JSON.parse(body).events;
+
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : 'http://localhost:3000';
 
     for (const event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
@@ -41,12 +45,8 @@ export default async function handler(req, res) {
           continue;
         }
 
-        // ✅ LLM 查詢邏輯（相對路徑 + fallback）
+        // ✅ LLM 查詢邏輯
         try {
-          const baseUrl = process.env.VERCEL_URL
-            ? `https://${process.env.VERCEL_URL}`
-            : 'http://localhost:3000'; // fallback for local dev
-
           const response = await fetch(new URL('/api/llm', baseUrl), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -64,7 +64,7 @@ export default async function handler(req, res) {
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: img.url || 'https://example.com/default.jpg', // 預設圖片避免空白
+                url: img.url || 'https://example.com/default.jpg',
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
@@ -110,7 +110,7 @@ export default async function handler(req, res) {
       }
     }
 
-    res.status(200).end();
+    res.status(200).end();          
   } catch (err) {
     console.error('Webhook error:', err);
     res.status(500).end();
