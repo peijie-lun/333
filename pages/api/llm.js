@@ -1,115 +1,56 @@
 import { createClient } from '@supabase/supabase-js';
-import crypto from 'crypto';
 
-export const config = {
-  runtime: 'edge',
-};
-
-// ✅ 初始化 Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
 
-// ✅ 模擬 embedding（實際應替換為真正模型）
-function fakeEmbedding(text) {
-  const hash = crypto.createHash('sha256').update(text).digest('hex');
-  return Array.from({ length: 16 }, (_, i) =>
-    parseInt(hash.slice(i * 4, i * 4 + 4), 16) % 1000
-  );
-}
+export const config = {
+  api: {
+    bodyParser: true,
+  },
+};
 
-// ✅ 計算餘弦相似度
-function cosineSimilarity(a, b) {
-  const dot = a.reduce((sum, val, i) => sum + val * b[i], 0);
-  const magA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
-  const magB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
-  return dot / (magA * magB);
-}
-
-export default async function handler(req) {
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method Not Allowed' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    });
+    res.status(405).json({ error: 'Method Not Allowed' });
+    return;
+  }
+
+  const { query } = req.body;
+
+  if (!query || typeof query !== 'string') {
+    res.status(400).json({ error: '請提供有效的查詢文字。' });
+    return;
   }
 
   try {
-    const { query } = await req.json();
-    if (!query || typeof query !== 'string') {
-      return new Response(JSON.stringify({ error: 'Query is required' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    // 查詢 image 資料表，模糊比對 description 欄位
+    const { data, error } = await supabase
+      .from('image')
+      .select('url, description')
+      .ilike('description', `%${query}%`);
+
+    if (error) {
+      console.error('Supabase 查詢錯誤:', error);
+      res.status(500).json({ error: '資料庫查詢失敗。' });
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      res.status(200).json({
+        answer: `目前沒有找到與「${query}」相關的圖片，請查看社區公告或稍後再試。`,
+        images: [],
       });
+      return;
     }
 
-    const cleanQuery = query.trim();
-    const queryEmbedding = fakeEmbedding(cleanQuery);
-
-    // ✅ 從 Supabase 撈 FAQ 資料
-    const { data: faqData, error: faqError } = await supabase
-      .from('knowledge')
-      .select('id, content');
-
-    if (faqError || !faqData || faqData.length === 0) {
-      console.error('讀取 FAQ 失敗:', faqError);
-    }
-
-    // ✅ 找出最相近的 FAQ
-    let bestMatch = null;
-    let bestScore = -1;
-    for (const row of faqData || []) {
-      const embedding = fakeEmbedding(row.content);
-      const score = cosineSimilarity(queryEmbedding, embedding);
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = row.content;
-      }
-    }
-
-    const answer = bestMatch || '目前無法找到相關資訊，請查看社區公告。';
-
-    // ✅ 關鍵字判斷
-    const keywordMap = {
-      '風景': ['風景', '景色', '湖', '山', '夕陽'],
-      '停車': ['停車', '車位', '車庫'],
-      '設施': ['設施', '健身房', '游泳池', '公設'],
-    };
-
-    let matchedKeyword = '';
-    for (const [key, keywords] of Object.entries(keywordMap)) {
-      if (keywords.some(k => cleanQuery.includes(k))) {
-        matchedKeyword = key;
-        break;
-      }
-    }
-
-    // ✅ 查詢圖片資料
-    let images = [];
-    if (matchedKeyword) {
-      const { data: imageData, error: imageError } = await supabase
-        .from('images')
-        .select('url, description')
-        .ilike('description', `%${matchedKeyword}%`);
-
-      if (!imageError && imageData && imageData.length > 0) {
-        images = imageData.map(item => ({
-          url: item.url,
-          description: item.description,
-        }));
-      }
-    }
-
-    return new Response(JSON.stringify({ answer, images }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    res.status(200).json({
+      answer: `以下是與「${query}」相關的圖片：`,
+      images: data,
     });
   } catch (err) {
     console.error('API 錯誤:', err);
-    return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    });
+    res.status(500).json({ error: '伺服器錯誤，請稍後再試。' });
   }
 }
