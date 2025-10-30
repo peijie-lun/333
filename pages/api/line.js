@@ -41,9 +41,13 @@ export default async function handler(req, res) {
           continue;
         }
 
-        // ✅ LLM 查詢邏輯（相對路徑）
+        // ✅ LLM 查詢邏輯（相對路徑 + fallback）
         try {
-          const response = await fetch(`${req.headers.origin || ''}/api/llm`, {
+          const baseUrl = process.env.VERCEL_URL
+            ? `https://${process.env.VERCEL_URL}`
+            : 'http://localhost:3000'; // fallback for local dev
+
+          const response = await fetch(new URL('/api/llm', baseUrl), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: userText }),
@@ -60,7 +64,7 @@ export default async function handler(req, res) {
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: img.url || 'https://example.com/default.jpg',
+                url: img.url || 'https://example.com/default.jpg', // 預設圖片避免空白
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
