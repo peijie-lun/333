@@ -59,10 +59,13 @@ export default async function handler(req, res) {
   const topItems = scored.slice(0, 3).map(s => s.item);
 
   const referenceText = topItems.map(i => i.content).join('\n\n');
-  const imageItem = topItems.find(i => i.type === 'image' && i.url);
-  const imageUrl = imageItem?.url || 'https://example.com/default.jpg'; // ✅ 預設圖片
+
+  // ✅ 改進圖片選擇邏輯
+  const imageItem = topItems.find(i => i.url && /\.(jpg|jpeg|png)$/i.test(i.url));
+  const imageUrl = imageItem?.url || 'https://example.com/default.jpg';
 
   console.log('參考資料:', referenceText);
+  console.log('圖片項目:', imageItem);
   console.log('圖片 URL:', imageUrl);
 
   try {
@@ -90,7 +93,7 @@ export default async function handler(req, res) {
 
     let answer = response.data?.choices?.[0]?.message?.content?.trim();
     if (!answer || answer.length < 2) {
-      answer = '目前沒有找到相關資訊，請查看社區公告。'; // ✅ Fallback
+      answer = '目前沒有找到相關資訊，請查看社區公告。';
     }
 
     res.status(200).json({ answer, image: imageUrl });
