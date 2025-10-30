@@ -43,47 +43,7 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 最新公告邏輯
-        if (userText === '最新公告') {
-          const flexMessage = {
-            type: 'flex',
-            altText: '📢 最新公告',
-            contents: {
-              type: 'bubble',
-              hero: {
-                type: 'image',
-                url: 'https://example.com/announcement.jpg',
-                size: 'full',
-                aspectRatio: '20:13',
-                aspectMode: 'cover'
-              },
-              body: {
-                type: 'box',
-                layout: 'vertical',
-                contents: [
-                  {
-                    type: 'text',
-                    text: '📢 社區最新公告',
-                    weight: 'bold',
-                    size: 'lg',
-                    color: '#1DB446'
-                  },
-                  {
-                    type: 'text',
-                    text: '請注意：11/1 起社區將進行電梯保養，請配合使用樓梯。',
-                    wrap: true,
-                    margin: 'md',
-                    size: 'md',
-                    color: '#333333'
-                  }
-                ]
-              }
-            }
-          };
-
-          await client.replyMessage(replyToken, flexMessage);
-          continue;
-        }
+       
 
         // ✅ 查詢風景邏輯：從 Supabase 抓圖片
         if (userText.includes('風景')) {
