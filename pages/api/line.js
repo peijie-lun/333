@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   // 確保只接受 POST 請求
   if (req.method !== 'POST') {
     console.log('❌ 非 POST 請求：', req.method);
-    return res.status(405).json({ error: 'Method Not Allowed' });
+    return res.status(405).json({ error: 'Method Not Allowed' });                                       
   }
 
   const events = req.body.events;
