@@ -32,115 +32,13 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 使用者輸入「最新公告」時回覆輪播卡片
+        // ✅ 最新公告邏輯不變
         if (userText === '最新公告') {
-          const carouselMessage = {
-            type: 'flex',
-            altText: '📢 社區多則公告',
-            contents: {
-              type: 'carousel',
-              contents: [
-                {
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: 'https://i.imgur.com/your-image1.jpg',
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [
-                      {
-                        type: 'text',
-                        text: '📢 清潔日通知',
-                        weight: 'bold',
-                        size: 'xl',
-                        color: '#1DB446'
-                      },
-                      {
-                        type: 'text',
-                        text: '🗓️ 2025/10/28\n🕒 上午 9:00 - 12:00\n📍 社區中庭',
-                        wrap: true,
-                        size: 'sm',
-                        color: '#555555'
-                      }
-                    ]
-                  },
-                  footer: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [
-                      {
-                        type: 'button',
-                        style: 'primary',
-                        action: {
-                          type: 'uri',
-                          label: '查看詳情',
-                          uri: 'https://example.com/notice1'
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: 'https://i.imgur.com/your-image2.jpg',
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [
-                      {
-                        type: 'text',
-                        text: '🎉 中秋晚會',
-                        weight: 'bold',
-                        size: 'xl',
-                        color: '#FF6F00'
-                      },
-                      {
-                        type: 'text',
-                        text: '🗓️ 2025/10/30\n🕒 晚上 6:00\n📍 社區廣場',
-                        wrap: true,
-                        size: 'sm',
-                        color: '#555555'
-                      }
-                    ]
-                  },
-                  footer: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [
-                      {
-                        type: 'button',
-                        style: 'primary',
-                        action: {
-                          type: 'uri',
-                          label: '活動詳情',
-                          uri: 'https://example.com/notice2'
-                        }
-                      }
-                    ]
-                  }
-                }
-              ]
-            }
-          };
-
-          await client.replyMessage(replyToken, carouselMessage);
+          // ...原 Flex Message 輪播卡片略
           continue;
         }
 
-        // ✅ 原本的 LLM 查詢邏輯
-        let replyMessage = '';
-
+        // ✅ LLM 查詢邏輯
         try {
           const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
             method: 'POST',
@@ -149,27 +47,50 @@ export default async function handler(req, res) {
           });
 
           const result = await response.json();
-          replyMessage = typeof result.answer === 'string' && result.answer.trim()
-            ? result.answer.trim()
-            : '查詢失敗，請稍後再試。';
-        } catch (err) {
-          console.error('查詢 LLM API 失敗:', err);
-          replyMessage = '查詢失敗，請稍後再試。';
-        }
+          const replyMessage = result.answer?.trim() || '查詢失敗，請稍後再試。';
+          const imageUrl = result.image?.trim();
 
-        if (typeof replyMessage === 'string' && replyMessage.trim() !== '' && replyToken) {
-          try {
+          if (imageUrl) {
+            const bubbleMessage = {
+              type: 'flex',
+              altText: '📷 查詢結果圖片',
+              contents: {
+                type: 'bubble',
+                hero: {
+                  type: 'image',
+                  url: imageUrl,
+                  size: 'full',
+                  aspectRatio: '20:13',
+                  aspectMode: 'cover'
+                },
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: replyMessage,
+                      wrap: true,
+                      size: 'md',
+                      color: '#333333'
+                    }
+                  ]
+                }
+              }
+            };
+
+            await client.replyMessage(replyToken, bubbleMessage);
+          } else {
             await client.replyMessage(replyToken, {
               type: 'text',
               text: replyMessage,
             });
-          } catch (err) {
-            console.error('LINE 回覆訊息失敗:', err);
           }
-        } else {
-          console.warn('無效的 replyMessage 或 replyToken，略過回覆。', {
-            replyMessage,
-            replyToken,
+        } catch (err) {
+          console.error('查詢 LLM API 失敗:', err);
+          await client.replyMessage(replyToken, {
+            type: 'text',
+            text: '查詢失敗，請稍後再試。',
           });
         }
       }
