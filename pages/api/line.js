@@ -32,9 +32,43 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 最新公告邏輯不變
+        // ✅ 最新公告邏輯（略）
         if (userText === '最新公告') {
-          // ...原 Flex Message 輪播卡片略
+          // 這裡可以放你的 Flex Message 輪播卡片
+          continue;
+        }
+
+        // ✅ 自訂卡片功能：社區設施
+        if (userText === '社區設施') {
+          const facilityCard = {
+            type: 'flex',
+            altText: '🏡 社區設施介紹',
+            contents: {
+              type: 'bubble',
+              hero: {
+                type: 'image',
+                url: 'https://example.com/facility.jpg', // 換成你自己的圖片網址
+                size: 'full',
+                aspectRatio: '20:13',
+                aspectMode: 'cover'
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: '我們社區設有健身房、游泳池與閱讀室，歡迎住戶使用！',
+                    wrap: true,
+                    size: 'md',
+                    color: '#333333'
+                  }
+                ]
+              }
+            }
+          };
+
+          await client.replyMessage(replyToken, facilityCard);
           continue;
         }
 
