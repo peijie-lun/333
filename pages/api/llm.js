@@ -1,13 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 
 export const config = {
-  runtime: 'edge',                                                    
+  runtime: 'edge',
 };
-  
+
+// ✅ Supabase 初始化（使用後端環境變數）
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,  
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);                                                         
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 export default async function handler(req) {
   if (req.method !== 'POST') {
@@ -16,29 +17,39 @@ export default async function handler(req) {
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
     });
   }
-             
+
   try {
     const { query } = await req.json();
-    if (!query) {
+    if (!query || typeof query !== 'string') {
       return new Response(JSON.stringify({ error: 'Query is required' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
       });
     }
 
-    // ✅ 關鍵字判斷（去除空白）
     const cleanQuery = query.trim();
-    let keyword = '';
-    if (cleanQuery.includes('社區設施')) keyword = '設施';
-    else if (cleanQuery.includes('停車')) keyword = '停車';
-    else if (cleanQuery.includes('風景')) keyword = '風景';
+
+    // ✅ 關鍵字判斷（可擴充）
+    const keywordMap = {
+      '停車': ['停車', '車位', '車庫'],
+      '設施': ['設施', '健身房', '游泳池', '公設'],
+      '風景': ['風景', '景色', '湖', '山', '夕陽']
+    };
+
+    let matchedKeyword = '';
+    for (const [key, keywords] of Object.entries(keywordMap)) {
+      if (keywords.some(k => cleanQuery.includes(k))) {
+        matchedKeyword = key;
+        break;
+      }
+    }
 
     let images = [];
-    if (keyword) {
+    if (matchedKeyword) {
       const { data, error } = await supabase
         .from('images')
         .select('url, description')
-        .ilike('description', `%${keyword}%`);
+        .ilike('description', `%${matchedKeyword}%`);
 
       if (error) {
         console.error('Supabase 查詢錯誤:', error);
@@ -54,20 +65,9 @@ export default async function handler(req) {
       }));
     }
 
-    // ✅ 如果沒有圖片，給預設圖片
-    if (images.length === 0) {
-      images = [
-        {
-          url: 'https://example.com/default.jpg',
-          description: '預設圖片',
-        },
-      ];
-    }
-
-    const answer =
-      images.length > 0
-        ? `以下是與「${query}」相關的圖片：`
-        : '目前沒有找到相關圖片，請查看社區公告。';
+    const answer = matchedKeyword
+      ? `以下是與「${matchedKeyword}」相關的圖片與資訊：`
+      : '目前沒有找到相關圖片，請查看社區公告。';
 
     return new Response(JSON.stringify({ answer, images }), {
       status: 200,
