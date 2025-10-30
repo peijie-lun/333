@@ -36,7 +36,7 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 最新公告邏輯：回傳 Flex Message 卡片
+        // ✅ 最新公告邏輯：Flex Message
         if (userText === '最新公告') {
           const flexMessage = {
             type: 'flex',
@@ -45,7 +45,7 @@ export default async function handler(req, res) {
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: 'https://example.com/announcement.jpg', // 可替換成社區公告圖片
+                url: 'https://example.com/announcement.jpg',
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
@@ -64,6 +64,48 @@ export default async function handler(req, res) {
                   {
                     type: 'text',
                     text: '請注意：11/1 起社區將進行電梯保養，請配合使用樓梯。',
+                    wrap: true,
+                    margin: 'md',
+                    size: 'md',
+                    color: '#333333'
+                  }
+                ]
+              }
+            }
+          };
+
+          await client.replyMessage(replyToken, flexMessage);
+          continue;
+        }
+
+        // ✅ 查詢風景邏輯：Flex Message
+        if (userText.includes('風景')) {
+          const flexMessage = {
+            type: 'flex',
+            altText: '🏞️ 風景圖片',
+            contents: {
+              type: 'bubble',
+              hero: {
+                type: 'image',
+                url: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb', // 可替換成你自己的圖片
+                size: 'full',
+                aspectRatio: '20:13',
+                aspectMode: 'cover'
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: '🏞️ 美麗的湖邊風景',
+                    weight: 'bold',
+                    size: 'lg',
+                    color: '#1DB446'
+                  },
+                  {
+                    type: 'text',
+                    text: '這是社區附近的湖景，適合散步與拍照。',
                     wrap: true,
                     margin: 'md',
                     size: 'md',
