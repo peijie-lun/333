@@ -46,44 +46,43 @@ export default async function handler(req, res) {
   }
 
   const cachePath = path.resolve('./supabase_embeddings.json');
-  const imageCachePath = path.resolve('./image_embeddings.json');
-
-  if (!fs.existsSync(cachePath) || !fs.existsSync(imageCachePath)) {
+  if (!fs.existsSync(cachePath)) {
     res.status(500).json({ error: '快取檔案不存在' });
     return;
   }
 
   const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-  const imageCache = JSON.parse(fs.readFileSync(imageCachePath, 'utf-8'));
-
   const queryEmbedding = await getEmbedding(query);
   if (!queryEmbedding) {
     res.status(500).json({ error: 'Embedding 失敗' });
     return;
   }
 
-  // 🔍 文字資料相似度排序
-  const scored = Object.values(cache).map(item => ({
-    item,
+  // 計算相似度並排序
+  const scored = Object.entries(cache).map(([id, item]) => ({
+    id,
+    content: item.content,
+    embedding: item.embedding,
     score: cosineSimilarity(queryEmbedding, item.embedding),
   }));
+
   scored.sort((a, b) => b.score - a.score);
-  const topItems = scored.slice(0, 3).map(s => s.item);
+  const topItems = scored.slice(0, 3);
   const referenceText = topItems.map(i => i.content).join('\n\n');
 
-  // 🖼 圖片資料相似度排序
-  const imageScored = imageCache.map(item => ({
-    item,
-    score: cosineSimilarity(queryEmbedding, item.embedding),
-  }));
-  imageScored.sort((a, b) => b.score - a.score);
-  const bestImage = imageScored.find(i =>
-    i.item.url && /\.(jpg|jpeg|png|webp)$/i.test(i.item.url)
-  );
-  const imageUrl = bestImage?.item?.url || 'https://example.com/default.jpg';
+  // 從 content 擷取圖片 URL
+  let imageUrl = null;
+  for (const item of topItems) {
+    const match = item.content.match(/https?:\/\/\S+\.(jpg|jpeg|png|webp)[^\s]*/i);
+    if (match) {
+      imageUrl = match[0];
+      break;
+    }
+  }
 
-  console.log('參考資料:', referenceText);
-  console.log('圖片 URL:', imageUrl);
+  if (!imageUrl) {
+    imageUrl = 'https://example.com/default.jpg';
+  }
 
   try {
     const response = await axios.post(
