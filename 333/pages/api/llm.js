@@ -4,7 +4,7 @@ import { spawnSync } from 'child_process';
 import axios from 'axios';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = process.env.GROQ_MODEL;                   
+const GROQ_MODEL = process.env.GROQ_MODEL;
 
 function getEmbedding(text) {
   const result = spawnSync('python3', [path.resolve('./embedding.py'), text], {
@@ -45,7 +45,7 @@ export default async function handler(req, res) {
 
   const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
   const queryEmbedding = getEmbedding(query);
-  if (!queryEmbedding) {    
+  if (!queryEmbedding) {
     res.status(500).json({ error: 'Embedding 失敗' });
     return;
   }
@@ -62,6 +62,7 @@ export default async function handler(req, res) {
   const imageItem = topItems.find(i => i.type === 'image' && i.url);
   const imageUrl = imageItem?.url || 'https://example.com/default.jpg'; // ✅ 預設圖片
 
+  // 除錯 log
   console.log('參考資料:', referenceText);
   console.log('圖片 URL:', imageUrl);
 
