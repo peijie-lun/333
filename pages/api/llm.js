@@ -85,7 +85,7 @@ export default async function handler(req, res) {
         ],
       },
       {
-        headers: {
+        headers: {      
           Authorization: `Bearer ${GROQ_API_KEY}`,
         },               
       }
