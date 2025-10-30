@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 export const config = {
   runtime: 'edge',
@@ -25,8 +26,10 @@ if (fs.existsSync(cachePath)) {
 
 // ✅ 模擬 embedding（實際應替換為真正模型）
 function fakeEmbedding(text) {
-  const hash = require('crypto').createHash('sha256').update(text).digest('hex');
-  return Array.from({ length: 16 }, (_, i) => parseInt(hash.slice(i * 4, i * 4 + 4), 16) % 1000);
+  const hash = crypto.createHash('sha256').update(text).digest('hex');
+  return Array.from({ length: 16 }, (_, i) =>
+    parseInt(hash.slice(i * 4, i * 4 + 4), 16) % 1000
+  );
 }
 
 // ✅ 計算餘弦相似度
@@ -61,6 +64,7 @@ export default async function handler(req) {
     let bestMatch = null;
     let bestScore = -1;
     for (const [id, item] of Object.entries(embeddingCache)) {
+      if (!item.embedding) continue;
       const score = cosineSimilarity(queryEmbedding, item.embedding);
       if (score > bestScore) {
         bestScore = score;

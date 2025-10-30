@@ -75,7 +75,7 @@ export default async function handler(req, res) {
                 contents: [
                   {
                     type: 'text',
-                    text: img.title || '社區圖片',
+                    text: '社區圖片',
                     weight: 'bold',
                     size: 'lg',
                     wrap: true,
@@ -112,6 +112,12 @@ export default async function handler(req, res) {
 
           const messages = [];
 
+          // 先回覆文字，再回覆圖片卡片（或依需求調整順序）
+          messages.push({
+            type: 'text',
+            text: replyMessage,
+          });
+
           if (bubbles.length > 0) {
             messages.push({
               type: 'flex',
@@ -122,11 +128,6 @@ export default async function handler(req, res) {
               },
             });
           }
-
-          messages.push({
-            type: 'text',
-            text: replyMessage,
-          });
 
           await client.replyMessage(replyToken, messages);
         } catch (err) {
