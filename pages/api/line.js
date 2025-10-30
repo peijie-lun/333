@@ -110,35 +110,27 @@ export default async function handler(req, res) {
               },
             }));
 
-          let flexMessage;
+          const messages = [];
 
           if (bubbles.length > 0) {
-            flexMessage = {
+            messages.push({
               type: 'flex',
               altText: '📷 查詢結果',
               contents: {
                 type: 'carousel',
                 contents: bubbles,
               },
-            };
-          } else {
-            flexMessage = {
-              type: 'text',
-              text: replyMessage,
-            };
-          }
-
-          try {
-            await client.replyMessage(replyToken, flexMessage);
-          } catch (err) {
-            console.error('回覆 LINE Flex Message 失敗:', err);
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: replyMessage || '查詢失敗，請稍後再試。',
             });
           }
+
+          messages.push({
+            type: 'text',
+            text: replyMessage,
+          });
+
+          await client.replyMessage(replyToken, messages);
         } catch (err) {
-          console.error('查詢 LLM API 失敗:', err);
+          console.error('查詢 LLM API 或回覆失敗:', err);
           await client.replyMessage(replyToken, {
             type: 'text',
             text: '查詢失敗，請稍後再試。',
