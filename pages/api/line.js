@@ -1,4 +1,5 @@
 import { Client } from '@line/bot-sdk';
+import { createClient } from '@supabase/supabase-js';
 
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -6,6 +7,12 @@ const lineConfig = {
 };
 
 const client = new Client(lineConfig);
+
+// ✅ Supabase 初始化
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 export const config = {
   api: {
@@ -36,7 +43,7 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 最新公告邏輯：Flex Message
+        // ✅ 最新公告邏輯
         if (userText === '最新公告') {
           const flexMessage = {
             type: 'flex',
@@ -78,41 +85,51 @@ export default async function handler(req, res) {
           continue;
         }
 
-        // ✅ 查詢風景邏輯：Flex Message
+        // ✅ 查詢風景邏輯：從 Supabase 抓圖片
         if (userText.includes('風景')) {
+          const { data: imageData, error } = await supabase
+            .from('images')
+            .select('url, description')
+            .limit(5); // 可調整張數
+
+          if (error || !imageData || imageData.length === 0) {
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '目前沒有找到風景圖片，請稍後再試。',
+            });
+            continue;
+          }
+
+          const bubbles = imageData.map(img => ({
+            type: 'bubble',
+            hero: {
+              type: 'image',
+              url: img.url || 'https://example.com/default.jpg',
+              size: 'full',
+              aspectRatio: '20:13',
+              aspectMode: 'cover'
+            },
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: img.description || '風景圖片',
+                  wrap: true,
+                  size: 'md',
+                  color: '#333333'
+                }
+              ]
+            }
+          }));
+
           const flexMessage = {
             type: 'flex',
             altText: '🏞️ 風景圖片',
             contents: {
-              type: 'bubble',
-              hero: {
-                type: 'image',
-                url: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb', // 可替換成你自己的圖片
-                size: 'full',
-                aspectRatio: '20:13',
-                aspectMode: 'cover'
-              },
-              body: {
-                type: 'box',
-                layout: 'vertical',
-                contents: [
-                  {
-                    type: 'text',
-                    text: '🏞️ 美麗的湖邊風景',
-                    weight: 'bold',
-                    size: 'lg',
-                    color: '#1DB446'
-                  },
-                  {
-                    type: 'text',
-                    text: '這是社區附近的湖景，適合散步與拍照。',
-                    wrap: true,
-                    margin: 'md',
-                    size: 'md',
-                    color: '#333333'
-                  }
-                ]
-              }
+              type: 'carousel',
+              contents: bubbles
             }
           };
 
@@ -120,7 +137,7 @@ export default async function handler(req, res) {
           continue;
         }
 
-        // ✅ LLM 查詢邏輯
+        // ✅ LLM 查詢邏輯（保留原本）
         try {
           const response = await fetch(new URL('/api/llm', baseUrl), {
             method: 'POST',
