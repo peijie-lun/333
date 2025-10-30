@@ -2,7 +2,7 @@ import { Client } from '@line/bot-sdk';
 import { createClient } from '@supabase/supabase-js';
 
 const lineConfig = {
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,    
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
