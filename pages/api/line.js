@@ -47,45 +47,38 @@ export default async function handler(req, res) {
           });
 
           const result = await response.json();
-          const replyMessage = result.answer?.trim() || '查詢失敗，請稍後再試。';
-          const imageUrl = result.image?.trim();
+          const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
+          const imageUrl = result.image?.trim() || 'https://example.com/default.jpg'; // ✅ 預設圖片
 
-          if (imageUrl) {
-            const bubbleMessage = {
-              type: 'flex',
-              altText: '📷 查詢結果圖片',
-              contents: {
-                type: 'bubble',
-                hero: {
-                  type: 'image',
-                  url: imageUrl,
-                  size: 'full',
-                  aspectRatio: '20:13',
-                  aspectMode: 'cover'
-                },
-                body: {
-                  type: 'box',
-                  layout: 'vertical',
-                  contents: [
-                    {
-                      type: 'text',
-                      text: replyMessage,
-                      wrap: true,
-                      size: 'md',
-                      color: '#333333'
-                    }
-                  ]
-                }
+          const bubbleMessage = {
+            type: 'flex',
+            altText: '📷 查詢結果',
+            contents: {
+              type: 'bubble',
+              hero: {
+                type: 'image',
+                url: imageUrl,
+                size: 'full',
+                aspectRatio: '20:13',
+                aspectMode: 'cover'
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: replyMessage,
+                    wrap: true,
+                    size: 'md',
+                    color: '#333333'
+                  }
+                ]
               }
-            };
+            }
+          };
 
-            await client.replyMessage(replyToken, bubbleMessage);
-          } else {
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: replyMessage,
-            });
-          }
+          await client.replyMessage(replyToken, bubbleMessage);
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
           await client.replyMessage(replyToken, {
