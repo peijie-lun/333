@@ -34,13 +34,16 @@ export default async function handler(req, res) {
 
         // ✅ 最新公告邏輯（略）
         if (userText === '最新公告') {
-          // 這裡可以放你的 Flex Message 輪播卡片
+          await client.replyMessage(replyToken, {
+            type: 'text',
+            text: '這裡是最新公告，請稍後補上 Flex Message。',
+          });
           continue;
         }
 
         // ✅ LLM 查詢邏輯
         try {
-          const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
+          const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/llm`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: userText }),
@@ -58,7 +61,7 @@ export default async function handler(req, res) {
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: img.url,
+                url: img.url || 'https://example.com/default.jpg', // 預設圖片避免空白
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
