@@ -8,7 +8,7 @@ const lineConfig = {
 
 const client = new Client(lineConfig);
 
-// ✅ Supabase 初始化
+// ✅ Supabase 初始化（使用後端環境變數）
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -43,14 +43,55 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-       
+        // ✅ 最新公告邏輯
+        if (userText === '最新公告') {
+          const flexMessage = {
+            type: 'flex',
+            altText: '📢 最新公告',
+            contents: {
+              type: 'bubble',
+              hero: {
+                type: 'image',
+                url: 'https://example.com/announcement.jpg',
+                size: 'full',
+                aspectRatio: '20:13',
+                aspectMode: 'cover'
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: '📢 社區最新公告',
+                    weight: 'bold',
+                    size: 'lg',
+                    color: '#1DB446'
+                  },
+                  {
+                    type: 'text',
+                    text: '請注意：11/1 起社區將進行電梯保養，請配合使用樓梯。',
+                    wrap: true,
+                    margin: 'md',
+                    size: 'md',
+                    color: '#333333'
+                  }
+                ]
+              }
+            }
+          };
 
-        // ✅ 查詢風景邏輯：從 Supabase 抓圖片
+          await client.replyMessage(replyToken, flexMessage);
+          continue;
+        }
+
+        // ✅ 查詢風景邏輯（直接從 Supabase 抓圖片）
         if (userText.includes('風景')) {
           const { data: imageData, error } = await supabase
             .from('images')
             .select('url, description')
-            .limit(5); // 可調整張數
+            .ilike('description', '%風景%')
+            .limit(5);
 
           if (error || !imageData || imageData.length === 0) {
             await client.replyMessage(replyToken, {
@@ -60,7 +101,7 @@ export default async function handler(req, res) {
             continue;
           }
 
-          const bubbles = imageData.map(img => ({ 
+          const bubbles = imageData.map(img => ({
             type: 'bubble',
             hero: {
               type: 'image',
@@ -97,7 +138,7 @@ export default async function handler(req, res) {
           continue;
         }
 
-        // ✅ LLM 查詢邏輯（保留原本）
+        // ✅ LLM 查詢邏輯（丟給 /api/llm）
         try {
           const response = await fetch(new URL('/api/llm', baseUrl), {
             method: 'POST',
