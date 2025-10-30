@@ -1,6 +1,4 @@
 import { createClient } from '@supabase/supabase-js';
-import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 
 export const config = {
@@ -9,20 +7,9 @@ export const config = {
 
 // ✅ 初始化 Supabase
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
 );
-
-// ✅ 載入 embedding 快取
-const cachePath = path.join(process.cwd(), 'supabase_embeddings.json');
-let embeddingCache = {};
-if (fs.existsSync(cachePath)) {
-  try {
-    embeddingCache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-  } catch (err) {
-    console.error('讀取 embedding 快取失敗:', err);
-  }
-}
 
 // ✅ 模擬 embedding（實際應替換為真正模型）
 function fakeEmbedding(text) {
@@ -60,15 +47,24 @@ export default async function handler(req) {
     const cleanQuery = query.trim();
     const queryEmbedding = fakeEmbedding(cleanQuery);
 
+    // ✅ 從 Supabase 撈 FAQ 資料
+    const { data: faqData, error: faqError } = await supabase
+      .from('knowledge')
+      .select('id, content');
+
+    if (faqError || !faqData || faqData.length === 0) {
+      console.error('讀取 FAQ 失敗:', faqError);
+    }
+
     // ✅ 找出最相近的 FAQ
     let bestMatch = null;
     let bestScore = -1;
-    for (const [id, item] of Object.entries(embeddingCache)) {
-      if (!item.embedding) continue;
-      const score = cosineSimilarity(queryEmbedding, item.embedding);
+    for (const row of faqData || []) {
+      const embedding = fakeEmbedding(row.content);
+      const score = cosineSimilarity(queryEmbedding, embedding);
       if (score > bestScore) {
         bestScore = score;
-        bestMatch = item.content;
+        bestMatch = row.content;
       }
     }
 
@@ -92,13 +88,13 @@ export default async function handler(req) {
     // ✅ 查詢圖片資料
     let images = [];
     if (matchedKeyword) {
-      const { data, error } = await supabase
+      const { data: imageData, error: imageError } = await supabase
         .from('images')
         .select('url, description')
         .ilike('description', `%${matchedKeyword}%`);
 
-      if (!error && data && data.length > 0) {
-        images = data.map(item => ({
+      if (!imageError && imageData && imageData.length > 0) {
+        images = imageData.map(item => ({
           url: item.url,
           description: item.description,
         }));
