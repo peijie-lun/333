@@ -27,49 +27,25 @@ export default async function handler(req, res) {
     const body = Buffer.concat(buffers).toString();
     const events = JSON.parse(body).events;
 
-    // ✅ 設定 API Base URL
     const baseUrl = process.env.VERCEL_URL
       ? `https://${process.env.VERCEL_URL}`
-      : 'http://localhost:3000'; // fallback for local dev
+      : 'http://localhost:3000';
 
     for (const event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 最新公告邏輯（略）
+        // ✅ 最新公告邏輯：回傳 Flex Message 卡片
         if (userText === '最新公告') {
-          await client.replyMessage(replyToken, {
-            type: 'text',
-            text: '這裡是最新公告，請稍後補上 Flex Message。',
-          });
-          continue;
-        }
-
-        // ✅ LLM 查詢邏輯
-        try {
-          const response = await fetch(new URL('/api/llm', baseUrl), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: userText }),
-          });
-
-          if (!response.ok) {
-            throw new Error(`LLM API 回傳錯誤: ${response.status}`);
-          }
-
-          const result = await response.json();
-          const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
-          const images = result.images || [];
-
-          let flexMessage;
-
-          if (images.length > 0) {
-            const bubbles = images.map(img => ({
+          const flexMessage = {
+            type: 'flex',
+            altText: '📢 最新公告',
+            contents: {
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: img.url || 'https://example.com/default.jpg', // 預設圖片避免空白
+                url: 'https://example.com/announcement.jpg', // 可替換成社區公告圖片
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
@@ -80,44 +56,5 @@ export default async function handler(req, res) {
                 contents: [
                   {
                     type: 'text',
-                    text: img.description || '社區圖片',
-                    wrap: true,
-                    size: 'md',
-                    color: '#333333'
-                  }
-                ]
-              }
-            }));
-
-            flexMessage = {
-              type: 'flex',
-              altText: '📷 查詢結果',
-              contents: {
-                type: 'carousel',
-                contents: bubbles
-              }
-            };
-          } else {
-            flexMessage = {
-              type: 'text',
-              text: replyMessage
-            };
-          }
-
-          await client.replyMessage(replyToken, flexMessage);
-        } catch (err) {
-          console.error('查詢 LLM API 失敗:', err);
-          await client.replyMessage(replyToken, {
-            type: 'text',
-            text: '查詢失敗，請稍後再試。',
-          });
-        }
-      }
-    }
-
-    res.status(200).end();
-  } catch (err) {
-    console.error('Webhook error:', err);
-    res.status(500).end();
-  }
-}
+                    text: '📢 社區最新公告',
+                    weight: 'bold',
