@@ -1,8 +1,29 @@
+import fs from 'fs';
+import path from 'path';
+import { spawnSync } from 'child_process';
 import axios from 'axios';
-import { supabase } from '../../lib/supabaseClient';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL;
+
+function getEmbedding(text) {
+  const result = spawnSync('python3', [path.resolve('./embedding.py'), text], {
+    encoding: 'utf-8',
+  });
+  if (result.error || result.status !== 0) return null;
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    return null;
+  }
+}
+
+function cosineSimilarity(a, b) {
+  const dot = a.reduce((sum, val, i) => sum + val * b[i], 0);
+  const normA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
+  const normB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
+  return dot / (normA * normB);
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -16,21 +37,32 @@ export default async function handler(req, res) {
     return;
   }
 
+  const cachePath = path.resolve('./supabase_embeddings.json');
+  if (!fs.existsSync(cachePath)) {
+    res.status(500).json({ error: '快取檔案不存在' });
+    return;
+  }
+
+  const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+  const queryEmbedding = getEmbedding(query);
+  if (!queryEmbedding) {
+    res.status(500).json({ error: 'Embedding 失敗' });
+    return;
+  }
+
+  const scored = Object.values(cache).map(item => ({
+    item,
+    score: cosineSimilarity(queryEmbedding, item.embedding),
+  }));
+
+  scored.sort((a, b) => b.score - a.score);
+  const topItems = scored.slice(0, 3).map(s => s.item);
+
+  const referenceText = topItems.map(i => i.content).join('\n\n');
+  const imageItem = topItems.find(i => i.type === 'image' && i.url);
+  const imageUrl = imageItem?.url || null;
+
   try {
-    // 直接抓全部 knowledge 資料
-    const { data: knowledge, error } = await supabase
-      .from('knowledge')
-      .select('content');
-
-    if (error || !knowledge || knowledge.length === 0) {
-      console.error('Supabase 查詢錯誤:', error);
-      res.status(500).json({ error: '無法取得知識資料' });
-      return;
-    }
-
-    // 將所有 content 合併成一段參考資料
-    const referenceText = knowledge.map(k => k.content).join('\n\n');
-
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
@@ -54,13 +86,7 @@ export default async function handler(req, res) {
     );
 
     const answer = response.data?.choices?.[0]?.message?.content?.trim();
-
-    if (!answer) {
-      res.status(200).json({ answer: '查詢失敗，請稍後再試。' });
-      return;
-    }
-
-    res.status(200).json({ answer });
+    res.status(200).json({ answer: answer || '查詢失敗，請稍後再試。', image: imageUrl });
   } catch (error) {
     console.error('LLM API error:', error);
     res.status(500).json({ error: 'Internal Server Error' });

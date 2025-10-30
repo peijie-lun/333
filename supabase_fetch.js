@@ -18,7 +18,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const cachePath = path.join(__dirname, 'supabase_embeddings.json');
-    
+
 function getEmbedding(text) {
 	const py = spawnSync('python', [__dirname + '/embedding.py', text], { encoding: 'utf-8' });
 	if (py.error || py.status !== 0) return null;
@@ -100,6 +100,37 @@ async function fetchAndCache() {
 			console.log('所有 embedding 已是最新');
 		}
 		console.log('快取成功 id：', Object.keys(cache));
+
+	// 抓取圖片 URL 資料
+	const { data: imageData, error: imageError } = await supabase
+		.from('images')
+		.select('id, url, description');
+	
+	if (imageError) {
+		console.log('images table 不存在或查詢失敗，跳過圖片資料:', imageError.message);
+	} else if (imageData && imageData.length > 0) {
+		console.log(`\n成功抓取 ${imageData.length} 筆圖片資料：`);
+		imageData.forEach(img => {
+			console.log(`  - ID: ${img.id}, URL: ${img.url}, 描述: ${img.description || '無'}`);
+		});
+		
+		// 將圖片資料也加入 cache，方便 AI 查詢
+		for (const img of imageData) {
+			const imgKey = `img_${img.id}`;
+			const imgContent = `圖片: ${img.description || '無描述'}\nURL: ${img.url}`;
+			if (!cache[imgKey] || cache[imgKey].content !== imgContent) {
+				const embedding = getEmbedding(imgContent);
+				if (embedding) {
+					cache[imgKey] = { content: imgContent, embedding, type: 'image', url: img.url };
+					console.log(`已加入圖片 embedding: ${imgKey}`);
+				}
+			}
+		}
+		
+		// 更新快取檔案
+		fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf-8');
+		console.log('圖片資料已加入快取');
+	}
 }
 
 fetchAndCache();
