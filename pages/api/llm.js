@@ -1,56 +1,41 @@
-import { createClient } from '@supabase/supabase-js';
+// pages/api/llm.js
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
-
-export const config = {
-  api: {
-    bodyParser: true,
-  },
-};
+import { generateAnswer } from '../../grokmain'; // 確保 grokmain.js 有 export generateAnswer
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method Not Allowed' });
-    return;
-  }
-
-  const { query } = req.body;
-
-  if (!query || typeof query !== 'string') {
-    res.status(400).json({ error: '請提供有效的查詢文字。' });
-    return;
+    return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
   try {
-    // 查詢 image 資料表，模糊比對 description 欄位
-    const { data, error } = await supabase
-      .from('image')
-      .select('url, description')
-      .ilike('description', `%${query}%`);
-
-    if (error) {
-      console.error('Supabase 查詢錯誤:', error);
-      res.status(500).json({ error: '資料庫查詢失敗。' });
-      return;
+    const { query } = req.body;
+    if (!query || typeof query !== 'string') {
+      return res.status(400).json({ error: 'Invalid query' });
     }
 
-    if (!data || data.length === 0) {
-      res.status(200).json({
-        answer: `目前沒有找到與「${query}」相關的圖片，請查看社區公告或稍後再試。`,
-        images: [],
-      });
-      return;
+    const result = await generateAnswer(query);
+
+    // 預設回傳格式
+    const responsePayload = {
+      answer: '',
+      images: []
+    };
+
+    if (result?.type === 'image') {
+      // 圖片查詢結果
+      responsePayload.answer = '以下是相關圖片：';
+      responsePayload.images = result.items.map(item => ({
+        url: item.url,
+        description: item.title || '社區圖片'
+      }));
+    } else {
+      // 一般文字查詢結果
+      responsePayload.answer = result?.content || '目前沒有找到相關資訊，請查看社區公告。';
     }
 
-    res.status(200).json({
-      answer: `以下是與「${query}」相關的圖片：`,
-      images: data,
-    });
-  } catch (err) {
-    console.error('API 錯誤:', err);
-    res.status(500).json({ error: '伺服器錯誤，請稍後再試。' });
+    res.status(200).json(responsePayload);
+  } catch (error) {
+    console.error('LLM 查詢失敗:', error);
+    res.status(500).json({ error: 'LLM 查詢失敗' });
   }
 }
