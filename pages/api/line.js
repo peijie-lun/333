@@ -8,7 +8,6 @@ const lineConfig = {
 
 const client = new Client(lineConfig);
 
-// ✅ Supabase 初始化
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
@@ -43,49 +42,7 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 最新公告邏輯
-        if (userText === '最新公告') {
-          const flexMessage = {
-            type: 'flex',
-            altText: '📢 最新公告',
-            contents: {
-              type: 'bubble',
-              hero: {
-                type: 'image',
-                url: 'https://example.com/announcement.jpg',
-                size: 'full',
-                aspectRatio: '20:13',
-                aspectMode: 'cover'
-              },
-              body: {
-                type: 'box',
-                layout: 'vertical',
-                contents: [
-                  {
-                    type: 'text',
-                    text: '📢 社區最新公告',
-                    weight: 'bold',
-                    size: 'lg',
-                    color: '#1DB446'
-                  },
-                  {
-                    type: 'text',
-                    text: '請注意：11/1 起社區將進行電梯保養，請配合使用樓梯。',
-                    wrap: true,
-                    margin: 'md',
-                    size: 'md',
-                    color: '#333333'
-                  }
-                ]
-              }
-            }
-          };
-
-          await client.replyMessage(replyToken, flexMessage);
-          continue;
-        }
-
-        // ✅ LLM 查詢邏輯（丟給 /api/llm）
+        // ✅ 查詢 LLM API
         try {
           const response = await fetch(new URL('/api/llm', baseUrl), {
             method: 'POST',
@@ -101,7 +58,7 @@ export default async function handler(req, res) {
           const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
           const images = result.images || [];
 
-          // ✅ 過濾無效圖片
+          // ✅ 過濾有效圖片
           const bubbles = images
             .filter(img => img.url && img.url.startsWith('https://'))
             .map(img => ({
@@ -146,7 +103,7 @@ export default async function handler(req, res) {
             };
           }
 
-          // ✅ 加入 try/catch 防止 LINE API 回傳錯誤
+          // ✅ 回覆 LINE 使用者
           try {
             await client.replyMessage(replyToken, flexMessage);
           } catch (err) {
