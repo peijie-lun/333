@@ -19,7 +19,7 @@ async function getEmbedding(text) {
     const py = spawnSync('python', [__dirname + '/embedding.py', text], { encoding: 'utf-8' });
     if (py.error) {
       console.error('執行 Python 失敗:', py.error);
-      return null;    
+      return null;
     }
     if (py.status !== 0) {
       console.error('Python embedding.py 執行錯誤:', py.stderr);
@@ -89,7 +89,7 @@ async function generateAnswer(query) {
   let mostRelevantChunk = top3[0].chunk;
   let maxSim = top3[0].sim;
   // fallback: 若最高分低於 0.6，則用關鍵字比對
-  if (maxSim < 0.8) {
+  if (maxSim < 0.9) {
     // 斷詞：每個中文字、英數詞都單獨拆分，並產生 n-gram
     const words = query.match(/[\u4e00-\u9fa5]|\w+/g) || [];
     let ngrams = [];
@@ -158,4 +158,4 @@ async function generateAnswer(query) {
 }
 
 // 查詢
-generateAnswer('公告');
+generateAnswer('可不可以養寵物?');
