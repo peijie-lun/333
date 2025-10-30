@@ -42,7 +42,6 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 查詢 LLM API
         try {
           const response = await fetch(new URL('/api/llm', baseUrl), {
             method: 'POST',
@@ -58,7 +57,6 @@ export default async function handler(req, res) {
           const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
           const images = result.images || [];
 
-          // ✅ 過濾有效圖片
           const bubbles = images
             .filter(img => img.url && img.url.startsWith('https://'))
             .map(img => ({
@@ -67,22 +65,49 @@ export default async function handler(req, res) {
                 type: 'image',
                 url: img.url,
                 size: 'full',
-                aspectRatio: '20:13',
-                aspectMode: 'cover'
+                aspectRatio: '16:9',
+                aspectMode: 'cover',
               },
               body: {
                 type: 'box',
                 layout: 'vertical',
+                spacing: 'md',
                 contents: [
                   {
                     type: 'text',
-                    text: img.description || '社區圖片',
+                    text: img.title || '社區圖片',
+                    weight: 'bold',
+                    size: 'lg',
                     wrap: true,
-                    size: 'md',
-                    color: '#333333'
-                  }
-                ]
-              }
+                    color: '#1DB446',
+                  },
+                  {
+                    type: 'text',
+                    text: img.description || '這是社區相關的圖片資訊。',
+                    size: 'sm',
+                    wrap: true,
+                    color: '#555555',
+                  },
+                ],
+              },
+              footer: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'sm',
+                contents: [
+                  {
+                    type: 'button',
+                    style: 'link',
+                    height: 'sm',
+                    action: {
+                      type: 'uri',
+                      label: '查看原圖',
+                      uri: img.url,
+                    },
+                  },
+                ],
+                flex: 0,
+              },
             }));
 
           let flexMessage;
@@ -93,17 +118,16 @@ export default async function handler(req, res) {
               altText: '📷 查詢結果',
               contents: {
                 type: 'carousel',
-                contents: bubbles
-              }
+                contents: bubbles,
+              },
             };
           } else {
             flexMessage = {
               type: 'text',
-              text: replyMessage
+              text: replyMessage,
             };
           }
 
-          // ✅ 回覆 LINE 使用者
           try {
             await client.replyMessage(replyToken, flexMessage);
           } catch (err) {
