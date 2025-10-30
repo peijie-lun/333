@@ -13,7 +13,7 @@ export const config = {
   },
 };
 
-export default async function handler(req, res) {       
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).send('Method Not Allowed');
     return;
@@ -27,9 +27,10 @@ export default async function handler(req, res) {
     const body = Buffer.concat(buffers).toString();
     const events = JSON.parse(body).events;
 
+    // ✅ 設定 API Base URL
     const baseUrl = process.env.VERCEL_URL
       ? `https://${process.env.VERCEL_URL}`
-      : 'http://localhost:3000';
+      : 'http://localhost:3000'; // fallback for local dev
 
     for (const event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
@@ -53,6 +54,10 @@ export default async function handler(req, res) {
             body: JSON.stringify({ query: userText }),
           });
 
+          if (!response.ok) {
+            throw new Error(`LLM API 回傳錯誤: ${response.status}`);
+          }
+
           const result = await response.json();
           const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
           const images = result.images || [];
@@ -64,7 +69,7 @@ export default async function handler(req, res) {
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: img.url || 'https://example.com/default.jpg',
+                url: img.url || 'https://example.com/default.jpg', // 預設圖片避免空白
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
@@ -110,7 +115,7 @@ export default async function handler(req, res) {
       }
     }
 
-    res.status(200).end();          
+    res.status(200).end();
   } catch (err) {
     console.error('Webhook error:', err);
     res.status(500).end();
