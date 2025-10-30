@@ -8,10 +8,10 @@ const lineConfig = {
 
 const client = new Client(lineConfig);
 
-// ✅ Supabase 初始化（使用後端環境變數）
+// ✅ Supabase 初始化
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
 );
 
 export const config = {
@@ -85,59 +85,6 @@ export default async function handler(req, res) {
           continue;
         }
 
-        // ✅ 查詢風景邏輯（直接從 Supabase 抓圖片）
-        if (userText.includes('風景')) {
-          const { data: imageData, error } = await supabase
-            .from('images')
-            .select('url, description')
-            .ilike('description', '%風景%')
-            .limit(5);
-
-          if (error || !imageData || imageData.length === 0) {
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: '目前沒有找到風景圖片，請稍後再試。',
-            });
-            continue;
-          }
-
-          const bubbles = imageData.map(img => ({
-            type: 'bubble',
-            hero: {
-              type: 'image',
-              url: img.url || 'https://example.com/default.jpg',
-              size: 'full',
-              aspectRatio: '20:13',
-              aspectMode: 'cover'
-            },
-            body: {
-              type: 'box',
-              layout: 'vertical',
-              contents: [
-                {
-                  type: 'text',
-                  text: img.description || '風景圖片',
-                  wrap: true,
-                  size: 'md',
-                  color: '#333333'
-                }
-              ]
-            }
-          }));
-
-          const flexMessage = {
-            type: 'flex',
-            altText: '🏞️ 風景圖片',
-            contents: {
-              type: 'carousel',
-              contents: bubbles
-            }
-          };
-
-          await client.replyMessage(replyToken, flexMessage);
-          continue;
-        }
-
         // ✅ LLM 查詢邏輯（丟給 /api/llm）
         try {
           const response = await fetch(new URL('/api/llm', baseUrl), {
@@ -154,14 +101,14 @@ export default async function handler(req, res) {
           const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
           const images = result.images || [];
 
-          let flexMessage;
-
-          if (images.length > 0) {
-            const bubbles = images.map(img => ({
+          // ✅ 過濾無效圖片
+          const bubbles = images
+            .filter(img => img.url && img.url.startsWith('https://'))
+            .map(img => ({
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: img.url || 'https://example.com/default.jpg',
+                url: img.url,
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
@@ -181,6 +128,9 @@ export default async function handler(req, res) {
               }
             }));
 
+          let flexMessage;
+
+          if (bubbles.length > 0) {
             flexMessage = {
               type: 'flex',
               altText: '📷 查詢結果',
@@ -196,7 +146,16 @@ export default async function handler(req, res) {
             };
           }
 
-          await client.replyMessage(replyToken, flexMessage);
+          // ✅ 加入 try/catch 防止 LINE API 回傳錯誤
+          try {
+            await client.replyMessage(replyToken, flexMessage);
+          } catch (err) {
+            console.error('回覆 LINE Flex Message 失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: replyMessage || '查詢失敗，請稍後再試。',
+            });
+          }
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
           await client.replyMessage(replyToken, {
