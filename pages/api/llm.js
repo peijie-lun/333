@@ -3,8 +3,8 @@
 import { generateAnswer } from '../../grokmain'; // 確保 grokmain.js 有 export generateAnswer
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });             
+  if (req.method !== 'POST') {      
+    return res.status(405).json({ error: 'Method Not Allowed' });                      
   }
 
   try {
