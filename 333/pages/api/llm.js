@@ -62,7 +62,6 @@ export default async function handler(req, res) {
   const imageItem = topItems.find(i => i.type === 'image' && i.url);
   const imageUrl = imageItem?.url || 'https://example.com/default.jpg'; // ✅ 預設圖片
 
-  // 除錯 log
   console.log('參考資料:', referenceText);
   console.log('圖片 URL:', imageUrl);
 
@@ -96,7 +95,7 @@ export default async function handler(req, res) {
 
     res.status(200).json({ answer, image: imageUrl });
   } catch (error) {
-    console.error('LLM API error:', error);
+    console.error('LLM API error:', error.response?.data || error.message);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 }
