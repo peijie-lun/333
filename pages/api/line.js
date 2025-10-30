@@ -41,9 +41,9 @@ export default async function handler(req, res) {
           continue;
         }
 
-        // ✅ LLM 查詢邏輯
+        // ✅ LLM 查詢邏輯（相對路徑）
         try {
-          const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/llm`, {
+          const response = await fetch(`${req.headers.origin || ''}/api/llm`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: userText }),
@@ -56,12 +56,11 @@ export default async function handler(req, res) {
           let flexMessage;
 
           if (images.length > 0) {
-            // ✅ 動態生成 Carousel
             const bubbles = images.map(img => ({
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: img.url || 'https://example.com/default.jpg', // 預設圖片避免空白
+                url: img.url || 'https://example.com/default.jpg',
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
@@ -90,7 +89,6 @@ export default async function handler(req, res) {
               }
             };
           } else {
-            // ✅ 沒有圖片時，回傳純文字
             flexMessage = {
               type: 'text',
               text: replyMessage
