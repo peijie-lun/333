@@ -45,7 +45,7 @@ export default async function handler(req, res) {
 
   const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
   const queryEmbedding = getEmbedding(query);
-  if (!queryEmbedding) {
+  if (!queryEmbedding) {    
     res.status(500).json({ error: 'Embedding 失敗' });
     return;
   }
