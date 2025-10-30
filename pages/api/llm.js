@@ -1,35 +1,53 @@
+// pages/api/llm.js
+import { generateAnswer } from '../../lib/grokmain'; // 根據你的專案結構調整路徑
+import axios from 'axios';
 
-import { generateAnswer } from '../../grokmain';
+const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
+  if (req.method !== 'POST') return res.status(405).end();
 
-  const { query } = req.body;
-  if (!query || typeof query !== 'string') {
-    return res.status(400).json({ error: 'Invalid query' });
-  }
+  const events = req.body.events;
+  if (!events || events.length === 0) return res.status(200).end();
 
-  try {
-    const result = await generateAnswer(query);
+  for (const event of events) {
+    if (event.type !== 'message' || event.message.type !== 'text') continue;
 
-    if (result?.type === 'image') {
-      return res.status(200).json({
-        answer: '以下是相關圖片：',
-        images: result.items.map(item => ({
-          url: item.url,
-          description: item.title || '社區圖片'
-        }))
-      });
-    } else {
-      return res.status(200).json({
-        answer: result?.content || '目前沒有找到相關資訊，請查看社區公告。',
-        images: []
-      });
+    const userMessage = event.message.text;
+    const replyToken = event.replyToken;
+
+    // 呼叫你已經寫好的查詢邏輯
+    const result = await generateAnswer(userMessage);
+
+    let messages = [];
+
+    if (result.type === 'text') {
+      messages.push({ type: 'text', text: result.content });
+    } else if (result.type === 'image') {
+      for (const item of result.items) {
+        messages.push({
+          type: 'image',
+          originalContentUrl: item.url,
+          previewImageUrl: item.url
+        });
+      }
     }
-  } catch (error) {
-    console.error('LLM 查詢失敗:', error);
-    return res.status(500).json({ error: 'LLM 查詢失敗' });
+
+    // 回傳給 LINE 使用者
+    await axios.post(
+      'https://api.line.me/v2/bot/message/reply',
+      {
+        replyToken,
+        messages
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+        }
+      }
+    );
   }
+
+  res.status(200).end();
 }
