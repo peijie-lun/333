@@ -38,40 +38,6 @@ export default async function handler(req, res) {
           continue;
         }
 
-        // ✅ 自訂卡片功能：社區設施
-        if (userText === '社區設施') {
-          const facilityCard = {
-            type: 'flex',
-            altText: '🏡 社區設施介紹',
-            contents: {
-              type: 'bubble',
-              hero: {
-                type: 'image',
-                url: 'https://example.com/facility.jpg', // 換成你自己的圖片網址
-                size: 'full',
-                aspectRatio: '20:13',
-                aspectMode: 'cover'
-              },
-              body: {
-                type: 'box',
-                layout: 'vertical',
-                contents: [
-                  {
-                    type: 'text',
-                    text: '我們社區設有健身房、游泳池與閱讀室，歡迎住戶使用！',
-                    wrap: true,
-                    size: 'md',
-                    color: '#333333'
-                  }
-                ]
-              }
-            }
-          };
-
-          await client.replyMessage(replyToken, facilityCard);
-          continue;
-        }
-
         // ✅ LLM 查詢邏輯
         try {
           const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
@@ -82,16 +48,17 @@ export default async function handler(req, res) {
 
           const result = await response.json();
           const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
-          const imageUrl = result.image?.trim() || 'https://example.com/default.jpg'; // ✅ 預設圖片
+          const images = result.images || [];
 
-          const bubbleMessage = {
-            type: 'flex',
-            altText: '📷 查詢結果',
-            contents: {
+          let flexMessage;
+
+          if (images.length > 0) {
+            // ✅ 動態生成 Carousel
+            const bubbles = images.map(img => ({
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: imageUrl,
+                url: img.url,
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
@@ -102,17 +69,32 @@ export default async function handler(req, res) {
                 contents: [
                   {
                     type: 'text',
-                    text: replyMessage,
+                    text: img.description || '社區圖片',
                     wrap: true,
                     size: 'md',
                     color: '#333333'
                   }
                 ]
               }
-            }
-          };
+            }));
 
-          await client.replyMessage(replyToken, bubbleMessage);
+            flexMessage = {
+              type: 'flex',
+              altText: '📷 查詢結果',
+              contents: {
+                type: 'carousel',
+                contents: bubbles
+              }
+            };
+          } else {
+            // ✅ 沒有圖片時，回傳純文字
+            flexMessage = {
+              type: 'text',
+              text: replyMessage
+            };
+          }
+
+          await client.replyMessage(replyToken, flexMessage);
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
           await client.replyMessage(replyToken, {
