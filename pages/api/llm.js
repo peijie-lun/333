@@ -92,7 +92,7 @@ export default async function handler(req, res) {
     );
 
     let answer = response.data?.choices?.[0]?.message?.content?.trim();
-    if (!answer || answer.length < 2) {
+    if (!answer || answer.length < 2) {       
       answer = '目前沒有找到相關資訊，請查看社區公告。';
     }
 
