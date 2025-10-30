@@ -1,4 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
+import path from 'path';
 
 export const config = {
   runtime: 'edge',
@@ -6,14 +8,34 @@ export const config = {
 
 // ✅ 初始化 Supabase
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
 );
 
-// ✅ Groq API 設定
-const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3-70b-8192';
+// ✅ 載入 embedding 快取
+const cachePath = path.join(process.cwd(), 'supabase_embeddings.json');
+let embeddingCache = {};
+if (fs.existsSync(cachePath)) {
+  try {
+    embeddingCache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+  } catch (err) {
+    console.error('讀取 embedding 快取失敗:', err);
+  }
+}
+
+// ✅ 模擬 embedding（實際應替換為真正模型）
+function fakeEmbedding(text) {
+  const hash = require('crypto').createHash('sha256').update(text).digest('hex');
+  return Array.from({ length: 16 }, (_, i) => parseInt(hash.slice(i * 4, i * 4 + 4), 16) % 1000);
+}
+
+// ✅ 計算餘弦相似度
+function cosineSimilarity(a, b) {
+  const dot = a.reduce((sum, val, i) => sum + val * b[i], 0);
+  const magA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
+  const magB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
+  return dot / (magA * magB);
+}
 
 export default async function handler(req) {
   if (req.method !== 'POST') {
@@ -33,41 +55,22 @@ export default async function handler(req) {
     }
 
     const cleanQuery = query.trim();
+    const queryEmbedding = fakeEmbedding(cleanQuery);
 
-    // ✅ 呼叫 Groq LLM 回答問題
-    const llmResponse = await fetch(GROQ_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          {
-            role: 'system',
-            content: '你是社區助理，請根據問題提供簡潔、清楚的回答。',
-          },
-          {
-            role: 'user',
-            content: cleanQuery,
-          },
-        ],
-      }),
-    });
-
-    if (!llmResponse.ok) {
-      console.error('Groq API 錯誤:', await llmResponse.text());
-      return new Response(JSON.stringify({ error: 'LLM 回覆失敗' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      });
+    // ✅ 找出最相近的 FAQ
+    let bestMatch = null;
+    let bestScore = -1;
+    for (const [id, item] of Object.entries(embeddingCache)) {
+      const score = cosineSimilarity(queryEmbedding, item.embedding);
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = item.content;
+      }
     }
 
-    const llmData = await llmResponse.json();
-    const answer = llmData.choices?.[0]?.message?.content?.trim() || '目前無法取得回答。';
+    const answer = bestMatch || '目前無法找到相關資訊，請查看社區公告。';
 
-    // ✅ 關鍵字判斷（可擴充）
+    // ✅ 關鍵字判斷
     const keywordMap = {
       '風景': ['風景', '景色', '湖', '山', '夕陽'],
       '停車': ['停車', '車位', '車庫'],
