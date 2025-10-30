@@ -75,7 +75,7 @@ export default async function handler(req, res) {
         model: GROQ_MODEL,
         messages: [
           {
-            role: 'system',         
+            role: 'system',               
             content: '你是檢索增強型助理，回答一律使用繁體中文，只能根據參考資料回答。',
           },
           {
