@@ -5,34 +5,6 @@ import axios from 'axios';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL;
 
-function cosineSimilarity(a, b) {
-  const dot = a.reduce((sum, val, i) => sum + val * b[i], 0);
-  const normA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
-  const normB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
-  return dot / (normA * normB);
-}
-
-async function getEmbedding(text) {
-  try {
-    const response = await axios.post(
-      'https://api.groq.com/openai/v1/embeddings',
-      {
-        model: 'text-embedding-ada-002',
-        input: text,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${GROQ_API_KEY}`,
-        },
-      }
-    );
-    return response.data?.data?.[0]?.embedding || null;
-  } catch (err) {
-    console.error('Embedding API error:', err.response?.data || err.message);
-    return null;
-  }
-}
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method Not Allowed' });
@@ -52,25 +24,16 @@ export default async function handler(req, res) {
   }
 
   const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-  const queryEmbedding = await getEmbedding(query);
-  if (!queryEmbedding) {
-    res.status(500).json({ error: 'Embedding 失敗' });
-    return;
-  }
 
-  // 計算相似度並排序
-  const scored = Object.entries(cache).map(([id, item]) => ({
-    id,
-    content: item.content,
-    embedding: item.embedding,
-    score: cosineSimilarity(queryEmbedding, item.embedding),
-  }));
+  // 🔍 關鍵字比對 content
+  const matchedItems = Object.values(cache).filter(item =>
+    item.content && item.content.includes(query)
+  );
 
-  scored.sort((a, b) => b.score - a.score);
-  const topItems = scored.slice(0, 3);
-  const referenceText = topItems.map(i => i.content).join('\n\n');
+  const topItems = matchedItems.slice(0, 3);
+  const referenceText = topItems.map(i => i.content).join('\n\n') || '（無相關資料）';
 
-  // 從 content 擷取圖片 URL
+  // 🖼 擷取圖片 URL
   let imageUrl = null;
   for (const item of topItems) {
     const match = item.content.match(/https?:\/\/\S+\.(jpg|jpeg|png|webp)[^\s]*/i);
