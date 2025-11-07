@@ -7,6 +7,12 @@ const lineConfig = {
 
 const client = new Client(lineConfig);
 
+export const config = {
+  api: {
+    bodyParser: true, // ✅ 使用 Next.js 內建解析
+  },
+};
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).send('Method Not Allowed');
@@ -14,7 +20,12 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { events } = req.body; // ✅ 直接用 Next.js 解析後的 body
+    const { events } = req.body || {};
+    if (!events || !Array.isArray(events)) {
+      console.error('Invalid LINE webhook body:', req.body);
+      res.status(400).send('Bad Request');
+      return;
+    }
 
     const facilityKeywords = ['公共設施', '設施', '健身房', '游泳池', '會議室', '交誼廳'];
 
@@ -23,7 +34,6 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 如果包含公共設施關鍵字 → 顯示 Flex 卡片
         if (facilityKeywords.some(kw => userText.includes(kw))) {
           const bubbleMessage = {
             type: 'flex',
@@ -55,7 +65,6 @@ export default async function handler(req, res) {
           continue;
         }
 
-        // ✅ 否則 → 呼叫 LLM API 回覆純文字
         try {
           const response = await fetch('https://333-psi-seven.vercel.app/api/line', {
             method: 'POST',
@@ -86,9 +95,3 @@ export default async function handler(req, res) {
     res.status(500).end();
   }
 }
-
-export const config = {
-  api: {
-    bodyParser: true, // ✅ 開啟 bodyParser
-  },
-};
