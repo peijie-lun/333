@@ -44,7 +44,7 @@ async function getEmbedding(text) {
 export async function getImageUrlsByKeyword(keyword) {
   try {
     const { data, error } = await supabase
-      .from('image')
+      .from('images')
       .select('url, description')
       .ilike('description', `%${keyword}%`);
 
