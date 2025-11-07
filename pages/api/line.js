@@ -71,7 +71,7 @@ export default async function handler(req, res) {
                     layout: 'vertical',
                     contents: [
                       { type: 'text', text: '公告二：電梯保養時間', wrap: true }
-                    ]
+                    ]                                                          
                   }
                 }
               ]
