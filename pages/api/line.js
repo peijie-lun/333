@@ -78,7 +78,7 @@ export default async function handler(req, res) {
             }
           };
 
-          await client.replyMessage(replyToken, carouselMessage);
+          await client.replyMessage(replyToken, carouselMessage);                              
           continue;
         }
 
