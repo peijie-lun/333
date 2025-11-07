@@ -140,4 +140,4 @@ async function generateAnswer(query) {
   }
 }
 
-module.exports = { generateAnswer };
+export { generateAnswer };
