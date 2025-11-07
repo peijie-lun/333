@@ -1,18 +1,11 @@
 import { Client } from '@line/bot-sdk';
-import getRawBody from 'raw-body';
 
 const lineConfig = {
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,                       
-  channelSecret: process.env.LINE_CHANNEL_SECRET,                                       
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-const client = new Client(lineConfig);                                         
-
-export const config = {
-  api: {
-    bodyParser: false, // 必須關閉，因為 LINE Webhook 需要原始 body 驗證
-  },
-};
+const client = new Client(lineConfig);
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -21,12 +14,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    // ✅ 取得原始 body
-    const bodyBuffer = await getRawBody(req);
-    const body = bodyBuffer.toString();
-    const events = JSON.parse(body).events;
+    const { events } = req.body; // ✅ 直接用 Next.js 解析後的 body
 
-    // 公共設施關鍵字
     const facilityKeywords = ['公共設施', '設施', '健身房', '游泳池', '會議室', '交誼廳'];
 
     for (const event of events) {
@@ -43,7 +32,7 @@ export default async function handler(req, res) {
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: 'https://example.com/facility.jpg', // 替換成實際圖片 URL
+                url: 'https://example.com/facility.jpg',
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
@@ -85,15 +74,21 @@ export default async function handler(req, res) {
           console.error('查詢 LLM API 失敗:', err);
           await client.replyMessage(replyToken, {
             type: 'text',
-            text: '查詢失敗，請稍後再試。',                                                                                                                                                                             
+            text: '查詢失敗，請稍後再試。',
           });
         }
       }
     }
 
-    res.status(200).end();                                                                                                          
+    res.status(200).end();
   } catch (err) {
     console.error('Webhook error:', err);
     res.status(500).end();
   }
 }
+
+export const config = {
+  api: {
+    bodyParser: true, // ✅ 開啟 bodyParser
+  },
+};
