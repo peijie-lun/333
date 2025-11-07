@@ -9,7 +9,7 @@ const client = new Client(lineConfig);
 
 export const config = {
   api: {
-    bodyParser: false, // LINE 驗證需要原始 body
+    bodyParser: false,
   },
 };
 
@@ -20,7 +20,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 讀取原始 body
     const buffers = [];
     for await (const chunk of req) {
       buffers.push(chunk);
@@ -28,7 +27,6 @@ export default async function handler(req, res) {
     const body = Buffer.concat(buffers).toString();
     const events = JSON.parse(body).events;
 
-    // 公共設施關鍵字
     const facilityKeywords = ['公共設施', '設施', '健身房', '游泳池', '會議室', '交誼廳'];
 
     for (const event of events) {
@@ -36,35 +34,70 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 如果包含公共設施關鍵字 → 顯示 Flex 卡片
+        // ✅ 如果包含公共設施關鍵字 → 顯示輪播卡片
         if (facilityKeywords.some(kw => userText.includes(kw))) {
-          const bubbleMessage = {
+          const carouselMessage = {
             type: 'flex',
             altText: '公共設施資訊',
             contents: {
-              type: 'bubble',
-              hero: {
-                type: 'image',
-                url: 'https://example.com/facility.jpg', // 替換成實際圖片
-                size: 'full',
-                aspectRatio: '20:13',
-                aspectMode: 'cover'
-              },
-              body: {
-                type: 'box',
-                layout: 'vertical',
-                contents: [
-                  {
-                    type: 'text',
-                    text: '健身房開放時間：06:00 - 22:00\n請遵守使用規範。',
-                    wrap: true
+              type: 'carousel',
+              contents: [
+                {
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: 'https://example.com/gym.jpg',
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      { type: 'text', text: '健身房\n開放時間：06:00 - 22:00', wrap: true }
+                    ]
                   }
-                ]
-              }
+                },
+                {
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: 'https://example.com/pool.jpg',
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      { type: 'text', text: '游泳池\n開放時間：08:00 - 20:00', wrap: true }
+                    ]
+                  }
+                },
+                {
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: 'https://example.com/lounge.jpg',
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      { type: 'text', text: '交誼廳\n開放時間：全天', wrap: true }
+                    ]
+                  }
+                }
+              ]
             }
           };
 
-          await client.replyMessage(replyToken, bubbleMessage);
+          await client.replyMessage(replyToken, carouselMessage);
           continue;
         }
 
