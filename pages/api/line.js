@@ -1,4 +1,5 @@
 import { Client } from '@line/bot-sdk';
+import { getImageUrlsByKeyword } from '../../grokmain.js'; // 新增匯入
 
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -28,13 +29,14 @@ export default async function handler(req, res) {
     const events = JSON.parse(body).events;
 
     const facilityKeywords = ['公共設施', '設施', '健身房', '游泳池', '會議室', '交誼廳'];
+    const imageKeywords = ['圖片', '風景', '設施']; // 新增圖片關鍵字
 
     for (const event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 如果包含公共設施關鍵字 → 顯示輪播卡片
+        // ✅ 如果包含公共設施關鍵字 → 顯示固定輪播卡片
         if (facilityKeywords.some(kw => userText.includes(kw))) {
           const carouselMessage = {
             type: 'flex',
@@ -94,6 +96,47 @@ export default async function handler(req, res) {
                   }
                 }
               ]
+            }
+          };
+
+          await client.replyMessage(replyToken, carouselMessage);
+          continue;
+        }
+
+        // ✅ 如果包含圖片關鍵字 → 查 Supabase 並回傳圖片輪播
+        if (imageKeywords.some(kw => userText.includes(kw))) {
+          const imageData = await getImageUrlsByKeyword(userText);
+
+          if (imageData.length === 0) {
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '目前沒有找到相關圖片，請稍後再試。',
+            });
+            continue;
+          }
+
+          const carouselMessage = {
+            type: 'flex',
+            altText: '圖片資訊',
+            contents: {
+              type: 'carousel',
+              contents: imageData.map(item => ({
+                type: 'bubble',
+                hero: {
+                  type: 'image',
+                  url: item.url,
+                  size: 'full',
+                  aspectRatio: '20:13',
+                  aspectMode: 'cover'
+                },
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  contents: [
+                    { type: 'text', text: item.description || '圖片', wrap: true }
+                  ]
+                }
+              }))
             }
           };
 
