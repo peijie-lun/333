@@ -2,8 +2,8 @@ import { Client } from '@line/bot-sdk';
 import getRawBody from 'raw-body';
 
 const lineConfig = {
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.LINE_CHANNEL_SECRET,
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,                       
+  channelSecret: process.env.LINE_CHANNEL_SECRET,                                       
 };
 
 const client = new Client(lineConfig);                                         
