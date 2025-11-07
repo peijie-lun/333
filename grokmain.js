@@ -1,4 +1,7 @@
-require('dotenv').config({ path: __dirname + '/.env' });  // 明確指定 .env 路徑
+import fs from 'fs';
+import path from 'path';
+import axios from 'axios';
+import { spawnSync } from 'child_process';
 
 // 僅執行 supabase_fetch.js，確保 embedding 快取最新
 const { spawnSync } = require('child_process');
