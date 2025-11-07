@@ -1,10 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import { spawnSync } from 'child_process';
 import axios from 'axios';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL;
+<<<<<<< HEAD
 
 function getEmbedding(text) {
   const result = spawnSync('python3', [path.resolve('./embedding.py'), text], {
@@ -24,6 +24,8 @@ function cosineSimilarity(a, b) {
   const normB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
   return dot / (normA * normB);
 }
+=======
+>>>>>>> c8b2ba0e9babae05c78b24eb05e015e4e0cea135
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -44,12 +46,26 @@ export default async function handler(req, res) {
   }
 
   const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-  const queryEmbedding = getEmbedding(query);
-  if (!queryEmbedding) {
-    res.status(500).json({ error: 'Embedding 失敗' });
-    return;
+
+  // 🔍 關鍵字比對 content
+  const matchedItems = Object.values(cache).filter(item =>
+    item.content && item.content.includes(query)
+  );
+
+  const topItems = matchedItems.slice(0, 3);
+  const referenceText = topItems.map(i => i.content).join('\n\n') || '（無相關資料）';
+
+  // 🖼 擷取圖片 URL
+  let imageUrl = null;
+  for (const item of topItems) {
+    const match = item.content.match(/https?:\/\/\S+\.(jpg|jpeg|png|webp)[^\s]*/i);
+    if (match) {
+      imageUrl = match[0];
+      break;
+    }
   }
 
+<<<<<<< HEAD
   const scored = Object.values(cache).map(item => ({
     item,
     score: cosineSimilarity(queryEmbedding, item.embedding),
@@ -67,6 +83,11 @@ export default async function handler(req, res) {
   console.log('參考資料:', referenceText);
   console.log('圖片項目:', imageItem);
   console.log('圖片 URL:', imageUrl);
+=======
+  if (!imageUrl) {
+    imageUrl = 'https://example.com/default.jpg';
+  }
+>>>>>>> c8b2ba0e9babae05c78b24eb05e015e4e0cea135
 
   try {
     const response = await axios.post(
@@ -92,7 +113,11 @@ export default async function handler(req, res) {
     );
 
     let answer = response.data?.choices?.[0]?.message?.content?.trim();
+<<<<<<< HEAD
     if (!answer || answer.length < 2) {       
+=======
+    if (!answer || answer.length < 2) {
+>>>>>>> c8b2ba0e9babae05c78b24eb05e015e4e0cea135
       answer = '目前沒有找到相關資訊，請查看社區公告。';
     }
 
