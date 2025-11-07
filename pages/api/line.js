@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     for (const event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text.trim();
-        const replyToken = event.replyToken;       
+        const replyToken = event.replyToken;
 
         // ✅ 最新公告 → 輪播卡片
         if (userText === '最新公告') {
@@ -67,18 +67,18 @@ export default async function handler(req, res) {
                     aspectMode: 'cover'
                   },
                   body: {
-                    type: 'box',                                
+                    type: 'box',
                     layout: 'vertical',
                     contents: [
-                      { type: 'text', text: '公告二：電梯保養時間', wrap: true }               
-                    ]                                                          
+                      { type: 'text', text: '公告二：電梯保養時間', wrap: true }
+                    ]
                   }
                 }
               ]
             }
           };
 
-          await client.replyMessage(replyToken, carouselMessage);                              
+          await client.replyMessage(replyToken, carouselMessage);
           continue;
         }
 
