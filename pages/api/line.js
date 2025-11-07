@@ -1,4 +1,4 @@
-mport { Client } from '@line/bot-sdk';
+import { Client } from '@line/bot-sdk';
 
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -131,5 +131,4 @@ export default async function handler(req, res) {
     console.error('Webhook error:', err);
     res.status(500).end();
   }
-}
 }
