@@ -9,7 +9,7 @@ const client = new Client(lineConfig);
 
 export const config = {
   api: {
-    bodyParser: false,
+    bodyParser: false, // LINE 驗證需要原始 body
   },
 };
 
@@ -20,6 +20,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    // 讀取原始 body
     const buffers = [];
     for await (const chunk of req) {
       buffers.push(chunk);
@@ -27,41 +28,24 @@ export default async function handler(req, res) {
     const body = Buffer.concat(buffers).toString();
     const events = JSON.parse(body).events;
 
+    // 公共設施關鍵字
+    const facilityKeywords = ['公共設施', '設施', '健身房', '游泳池', '會議室', '交誼廳'];
+
     for (const event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 最新公告邏輯（可自行補上 Flex 輪播卡片）
-        if (userText === '最新公告') {
-          const flexMessage = {
-            type: 'text',
-            text: '這裡是最新公告內容（請補上 Flex 卡片）',
-          };
-          await client.replyMessage(replyToken, flexMessage);
-          continue;
-        }
-
-        // ✅ LLM 查詢邏輯
-        try {
-          const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: userText }),
-          });
-
-          const result = await response.json();
-          const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
-          const imageUrl = result.image?.trim() || 'https://example.com/default.jpg';
-
+        // ✅ 如果包含公共設施關鍵字 → 顯示 Flex 卡片
+        if (facilityKeywords.some(kw => userText.includes(kw))) {
           const bubbleMessage = {
             type: 'flex',
-            altText: '📷 查詢結果',
+            altText: '公共設施資訊',
             contents: {
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: imageUrl,
+                url: 'https://example.com/facility.jpg', // 替換成實際圖片
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
@@ -69,53 +53,45 @@ export default async function handler(req, res) {
               body: {
                 type: 'box',
                 layout: 'vertical',
-                spacing: 'md',
                 contents: [
                   {
                     type: 'text',
-                    text: '查詢結果',
-                    weight: 'bold',
-                    size: 'lg',
-                    color: '#1DB446'
-                  },
-                  {
-                    type: 'text',
-                    text: replyMessage,
-                    wrap: true,
-                    size: 'md',
-                    color: '#333333'
+                    text: '健身房開放時間：06:00 - 22:00\n請遵守使用規範。',
+                    wrap: true
                   }
                 ]
-              },
-              footer: {
-                type: 'box',
-                layout: 'vertical',
-                spacing: 'sm',
-                contents: [
-                  {
-                    type: 'button',
-                    style: 'link',
-                    height: 'sm',
-                    action: {
-                      type: 'uri',
-                      label: '查看更多',
-                      uri: 'https://example.com/more-info'
-                    }
-                  },
-                  {
-                    type: 'text',
-                    text: '如有疑問請洽社區管理員',
-                    size: 'xs',
-                    color: '#AAAAAA',
-                    align: 'center'
-                  }
-                ],
-                flex: 0
               }
             }
           };
 
           await client.replyMessage(replyToken, bubbleMessage);
+          continue;
+        }
+
+        // ✅ 否則 → 呼叫 LLM API 回覆純文字
+        try {
+          const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: userText }),
+          });
+
+          if (!response.ok) {
+            console.error('LLM API 回傳錯誤:', await response.text());
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '查詢失敗，請稍後再試。',
+            });
+            continue;
+          }
+
+          const result = await response.json();
+          const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
+
+          await client.replyMessage(replyToken, {
+            type: 'text',
+            text: replyMessage
+          });
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
           await client.replyMessage(replyToken, {
