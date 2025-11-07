@@ -32,9 +32,53 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 最新公告邏輯不變
+        // ✅ 最新公告 → 輪播卡片
         if (userText === '最新公告') {
-          // ...原 Flex Message 輪播卡片略
+          const carouselMessage = {
+            type: 'flex',
+            altText: '📢 最新公告',
+            contents: {
+              type: 'carousel',
+              contents: [
+                {
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: 'https://example.com/announcement1.jpg',
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      { type: 'text', text: '公告一：社區停車場維修', wrap: true }
+                    ]
+                  }
+                },
+                {
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: 'https://example.com/announcement2.jpg',
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      { type: 'text', text: '公告二：電梯保養時間', wrap: true }
+                    ]
+                  }
+                }
+              ]
+            }
+          };
+
+          await client.replyMessage(replyToken, carouselMessage);
           continue;
         }
 
@@ -48,7 +92,7 @@ export default async function handler(req, res) {
 
           const result = await response.json();
           const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
-          const imageUrl = result.image?.trim() || 'https://example.com/default.jpg'; // ✅ 預設圖片
+          const imageUrl = result.image?.trim() || 'https://example.com/default.jpg';
 
           const bubbleMessage = {
             type: 'flex',
