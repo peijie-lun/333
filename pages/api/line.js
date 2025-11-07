@@ -27,98 +27,24 @@ export default async function handler(req, res) {
     const body = Buffer.concat(buffers).toString();
     const events = JSON.parse(body).events;
 
+    // 公共設施關鍵字
+    const facilityKeywords = ['公共設施', '設施', '健身房', '游泳池', '會議室', '交誼廳'];
+
     for (const event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 最新公告 → 三個輪播卡片
-        if (userText === '最新公告') {
-          const carouselMessage = {
-            type: 'flex',
-            altText: '📢 最新公告',
-            contents: {
-              type: 'carousel',
-              contents: [
-                {
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: 'https://example.com/announcement1.jpg',
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [
-                      { type: 'text', text: '公告一：社區停車場維修', wrap: true }
-                    ]
-                  }
-                },
-                {
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: 'https://example.com/announcement2.jpg',
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [
-                      { type: 'text', text: '公告二：電梯保養時間', wrap: true }
-                    ]
-                  }
-                },
-                {
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: 'https://example.com/announcement3.jpg',
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [
-                      { type: 'text', text: '公告三：垃圾清運時間調整', wrap: true }
-                    ]
-                  }
-                }
-              ]
-            }
-          };
-
-          await client.replyMessage(replyToken, carouselMessage);
-          continue;
-        }
-
-        // ✅ LLM 查詢邏輯
-        try {
-          const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: userText }),
-          });
-
-          const result = await response.json();
-          const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
-          const imageUrl = result.image?.trim() || 'https://example.com/default.jpg';
-
+        // ✅ 如果包含公共設施關鍵字 → 顯示卡片
+        if (facilityKeywords.some(kw => userText.includes(kw))) {
           const bubbleMessage = {
             type: 'flex',
-            altText: '📷 查詢結果',
+            altText: '公共設施資訊',
             contents: {
               type: 'bubble',
               hero: {
                 type: 'image',
-                url: imageUrl,
+                url: 'https://example.com/facility.jpg', // 替換成實際圖片
                 size: 'full',
                 aspectRatio: '20:13',
                 aspectMode: 'cover'
@@ -129,10 +55,8 @@ export default async function handler(req, res) {
                 contents: [
                   {
                     type: 'text',
-                    text: replyMessage,
-                    wrap: true,
-                    size: 'md',
-                    color: '#333333'
+                    text: '健身房開放時間：06:00 - 22:00\n請遵守使用規範。',
+                    wrap: true
                   }
                 ]
               }
@@ -140,6 +64,24 @@ export default async function handler(req, res) {
           };
 
           await client.replyMessage(replyToken, bubbleMessage);
+          continue;
+        }
+
+        // ✅ 否則 → 呼叫 llm.js 回覆純文字
+        try {
+          const response = await fetch('https://your-vercel-app.vercel.app/api/llm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: userText }),
+          });
+
+          const result = await response.json();
+          const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
+
+          await client.replyMessage(replyToken, {
+            type: 'text',
+            text: replyMessage
+          });
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
           await client.replyMessage(replyToken, {
@@ -156,20 +98,3 @@ export default async function handler(req, res) {
     res.status(500).end();
   }
 }
-
-
-// 接收 LINE Webhook POST 請求。
-
-// 解析原始 body 成 JSON 事件陣列。
-
-// 遍歷事件：
-
-// 如果是文字訊息：
-
-// 如果文字是 "最新公告" → 回覆 Carousel Flex Message。
-
-// 否則 → 送 LLM API 查詢 → 回覆單個 Flex Bubble。
-
-// 捕捉 API 或程式錯誤，回覆使用者錯誤訊息。
-
-// 最後回傳 HTTP 狀態碼
