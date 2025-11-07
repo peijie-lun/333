@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { generateAnswer } from '../../../grokmain.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -11,10 +11,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    const response = await axios.post(`${process.env.BASE_URL}/api/grokmain`, { query });
-    return res.status(200).json(response.data);
+    const { answer, image } = await generateAnswer(query);
+    return res.status(200).json({ answer, image });
   } catch (error) {
-    console.error('呼叫 grokmain API 失敗:', error.response?.data || error.message);
+    console.error('Error in llm handler:', error);
     return res.status(500).json({ error: 'Internal Server Error' });
   }
 }
