@@ -69,7 +69,7 @@ export default async function handler(req, res) {
 
         // ✅ 否則 → 呼叫 llm.js 回覆純文字
         try {
-          const response = await fetch('https://your-vercel-app.vercel.app/api/llm', {
+          const response = await fetch('https://333-psi-seven.vercel.app/api/line', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: userText }),
