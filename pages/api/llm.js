@@ -1,10 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
+import { spawnSync } from 'child_process';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL;
-<<<<<<< HEAD
 
 function getEmbedding(text) {
   const result = spawnSync('python3', [path.resolve('./embedding.py'), text], {
@@ -24,8 +24,6 @@ function cosineSimilarity(a, b) {
   const normB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
   return dot / (normA * normB);
 }
-=======
->>>>>>> c8b2ba0e9babae05c78b24eb05e015e4e0cea135
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -47,25 +45,14 @@ export default async function handler(req, res) {
 
   const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
 
-  // 🔍 關鍵字比對 content
-  const matchedItems = Object.values(cache).filter(item =>
-    item.content && item.content.includes(query)
-  );
-
-  const topItems = matchedItems.slice(0, 3);
-  const referenceText = topItems.map(i => i.content).join('\n\n') || '（無相關資料）';
-
-  // 🖼 擷取圖片 URL
-  let imageUrl = null;
-  for (const item of topItems) {
-    const match = item.content.match(/https?:\/\/\S+\.(jpg|jpeg|png|webp)[^\s]*/i);
-    if (match) {
-      imageUrl = match[0];
-      break;
-    }
+  // ✅ 生成 query embedding
+  const queryEmbedding = getEmbedding(query);
+  if (!queryEmbedding) {
+    res.status(500).json({ error: 'Embedding 生成失敗' });
+    return;
   }
 
-<<<<<<< HEAD
+  // ✅ 計算相似度並排序
   const scored = Object.values(cache).map(item => ({
     item,
     score: cosineSimilarity(queryEmbedding, item.embedding),
@@ -73,21 +60,15 @@ export default async function handler(req, res) {
 
   scored.sort((a, b) => b.score - a.score);
   const topItems = scored.slice(0, 3).map(s => s.item);
+  const referenceText = topItems.map(i => i.content).join('\n\n') || '（無相關資料）';
 
-  const referenceText = topItems.map(i => i.content).join('\n\n');
-
-  // ✅ 改進圖片選擇邏輯
+  // ✅ 圖片選擇邏輯
   const imageItem = topItems.find(i => i.url && /\.(jpg|jpeg|png)$/i.test(i.url));
   const imageUrl = imageItem?.url || 'https://example.com/default.jpg';
 
   console.log('參考資料:', referenceText);
   console.log('圖片項目:', imageItem);
   console.log('圖片 URL:', imageUrl);
-=======
-  if (!imageUrl) {
-    imageUrl = 'https://example.com/default.jpg';
-  }
->>>>>>> c8b2ba0e9babae05c78b24eb05e015e4e0cea135
 
   try {
     const response = await axios.post(
@@ -96,7 +77,7 @@ export default async function handler(req, res) {
         model: GROQ_MODEL,
         messages: [
           {
-            role: 'system',               
+            role: 'system',
             content: '你是檢索增強型助理，回答一律使用繁體中文，只能根據參考資料回答。',
           },
           {
@@ -106,18 +87,14 @@ export default async function handler(req, res) {
         ],
       },
       {
-        headers: {      
+        headers: {
           Authorization: `Bearer ${GROQ_API_KEY}`,
-        },               
+        },
       }
     );
 
     let answer = response.data?.choices?.[0]?.message?.content?.trim();
-<<<<<<< HEAD
-    if (!answer || answer.length < 2) {       
-=======
     if (!answer || answer.length < 2) {
->>>>>>> c8b2ba0e9babae05c78b24eb05e015e4e0cea135
       answer = '目前沒有找到相關資訊，請查看社區公告。';
     }
 
