@@ -109,57 +109,15 @@ export default async function handler(req, res) {
               body: {
                 type: 'box',
                 layout: 'vertical',
-<<<<<<< HEAD
                 contents: [
                   {
                     type: 'text',
-=======
-                spacing: 'md',
-                contents: [
-                  {
-                    type: 'text',
-                    text: '查詢結果',
-                    weight: 'bold',
-                    size: 'lg',
-                    color: '#1DB446'
-                  },
-                  {
-                    type: 'text',
->>>>>>> c8b2ba0e9babae05c78b24eb05e015e4e0cea135
                     text: replyMessage,
                     wrap: true,
                     size: 'md',
                     color: '#333333'
                   }
                 ]
-<<<<<<< HEAD
-=======
-              },
-              footer: {
-                type: 'box',
-                layout: 'vertical',
-                spacing: 'sm',
-                contents: [
-                  {
-                    type: 'button',
-                    style: 'link',
-                    height: 'sm',
-                    action: {
-                      type: 'uri',
-                      label: '查看更多',
-                      uri: 'https://example.com/more-info'
-                    }
-                  },
-                  {
-                    type: 'text',
-                    text: '如有疑問請洽社區管理員',
-                    size: 'xs',
-                    color: '#AAAAAA',
-                    align: 'center'
-                  }
-                ],
-                flex: 0
->>>>>>> c8b2ba0e9babae05c78b24eb05e015e4e0cea135
               }
             }
           };
