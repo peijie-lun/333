@@ -5,7 +5,7 @@ import { spawnSync } from 'child_process';
 import { createClient } from '@supabase/supabase-js';
 
 // 初始化 Supabase
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
 // 僅執行 supabase_fetch.js，確保 embedding 快取最新
 const supabasePath = path.join(__dirname, 'supabase_fetch.js');
