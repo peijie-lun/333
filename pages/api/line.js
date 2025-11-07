@@ -32,7 +32,7 @@ export default async function handler(req, res) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 最新公告 → 輪播卡片
+        // ✅ 最新公告 → 三個輪播卡片
         if (userText === '最新公告') {
           const carouselMessage = {
             type: 'flex',
@@ -71,6 +71,23 @@ export default async function handler(req, res) {
                     layout: 'vertical',
                     contents: [
                       { type: 'text', text: '公告二：電梯保養時間', wrap: true }
+                    ]
+                  }
+                },
+                {
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: 'https://example.com/announcement3.jpg',
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      { type: 'text', text: '公告三：垃圾清運時間調整', wrap: true }
                     ]
                   }
                 }
@@ -139,3 +156,20 @@ export default async function handler(req, res) {
     res.status(500).end();
   }
 }
+
+
+// 接收 LINE Webhook POST 請求。
+
+// 解析原始 body 成 JSON 事件陣列。
+
+// 遍歷事件：
+
+// 如果是文字訊息：
+
+// 如果文字是 "最新公告" → 回覆 Carousel Flex Message。
+
+// 否則 → 送 LLM API 查詢 → 回覆單個 Flex Bubble。
+
+// 捕捉 API 或程式錯誤，回覆使用者錯誤訊息。
+
+// 最後回傳 HTTP 狀態碼
