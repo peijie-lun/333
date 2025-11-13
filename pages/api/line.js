@@ -1,3 +1,19 @@
+import { Client } from '@line/bot-sdk';
+import { getImageUrlsByKeyword } from '../../grokmain.js';
+
+const lineConfig = {
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
+};
+
+const client = new Client(lineConfig);
+
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).send('Method Not Allowed');
@@ -5,35 +21,177 @@ export default async function handler(req, res) {
   }
 
   try {
+    // ✅ 讀取原始 body
     const buffers = [];
     for await (const chunk of req) {
       buffers.push(chunk);
     }
-    const body = Buffer.concat(buffers).toString();
-    const events = JSON.parse(body).events;
+    const rawBody = Buffer.concat(buffers).toString();
+
+    if (!rawBody) {
+      console.error('Webhook error: Empty body');
+      res.status(400).send('Bad Request: Empty body');
+      return;
+    }
+
+    let events;
+    try {
+      const parsed = JSON.parse(rawBody);
+      events = parsed.events;
+    } catch (err) {
+      console.error('Webhook error: Invalid JSON', err);
+      res.status(400).send('Bad Request: Invalid JSON');
+      return;
+    }
+
+    const imageKeywords = ['圖片', '設施', '游泳池', '健身房', '大廳'];
 
     for (const event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        // ✅ 公共設施
+        console.log('使用者輸入:', userText);
+
+        // ✅ 1. 公共設施 → 回傳三張固定卡片
         if (userText.includes('公共設施')) {
-          // ... 回傳三張卡片
+          const carouselMessage = {
+            type: 'flex',
+            altText: '公共設施資訊',
+            contents: {
+              type: 'carousel',
+              contents: [
+                {
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: 'https://example.com/gym.jpg',
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      { type: 'text', text: '健身房\n開放時間：06:00 - 22:00', wrap: true }
+                    ]
+                  }
+                },
+                {
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: 'https://example.com/pool.jpg',
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      { type: 'text', text: '游泳池\n開放時間：08:00 - 20:00', wrap: true }
+                    ]
+                  }
+                },
+                {
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: 'https://example.com/lounge.jpg',
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      { type: 'text', text: '交誼廳\n開放時間：全天', wrap: true }
+                    ]
+                  }
+                }
+              ]
+            }
+          };
+
           await client.replyMessage(replyToken, carouselMessage);
-          return res.status(200).end();
+          continue; // ✅ 這裡可以保留，因為在 for loop 裡
         }
-        // ✅ 圖片
+
+        // ✅ 2. 圖片關鍵字 → 查 Supabase
         else if (imageKeywords.some(kw => userText.includes(kw))) {
-          // ... 查 Supabase 回傳圖片
-          await client.replyMessage(replyToken, carouselMessage);
-          return res.status(200).end();
+          const imageData = await getImageUrlsByKeyword(userText);
+          console.log('Supabase 查詢結果:', imageData);
+
+          if (imageData.length === 0) {
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '目前沒有找到相關圖片，請稍後再試。',
+            });
+          } else {
+            const carouselMessage = {
+              type: 'flex',
+              altText: '圖片資訊',
+              contents: {
+                type: 'carousel',
+                contents: imageData.map(item => ({
+                  type: 'bubble',
+                  hero: {
+                    type: 'image',
+                    url: item.url,
+                    size: 'full',
+                    aspectRatio: '20:13',
+                    aspectMode: 'cover'
+                  },
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    contents: [
+                      { type: 'text', text: item.description || '圖片', wrap: true }
+                    ]
+                  }
+                }))
+              }
+            };
+
+            await client.replyMessage(replyToken, carouselMessage);
+          }
+          continue;
         }
-        // ✅ LLM
+
+        // ✅ 3. 其他 → 呼叫 LLM API
         else {
-          // ... 呼叫 LLM API
-          await client.replyMessage(replyToken, { type: 'text', text: replyMessage });
-          return res.status(200).end();
+          try {
+            const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: userText }),
+            });
+
+            if (!response.ok) {
+              console.error('LLM API 回傳錯誤:', await response.text());
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '查詢失敗，請稍後再試。',
+              });
+            } else {
+              const result = await response.json();
+              const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
+
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: replyMessage
+              });
+            }
+          } catch (err) {
+            console.error('查詢 LLM API 失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '查詢失敗，請稍後再試。',
+            });
+          }
         }
       }
     }
@@ -43,4 +201,4 @@ export default async function handler(req, res) {
     console.error('Webhook error:', err);
     res.status(500).end();
   }
-} 
+}
