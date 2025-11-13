@@ -28,8 +28,8 @@ export default async function handler(req, res) {
     const body = Buffer.concat(buffers).toString();
     const events = JSON.parse(body).events;
 
-    const facilityKeywords = ['公共設施', '設施', '健身房', '游泳池', '會議室', '交誼廳'];
-    const imageKeywords = ['圖片', '風景', '設施', '游泳池', '健身房', '大廳'];
+    const facilityKeywords = ['健身房', '游泳池', '會議室', '交誼廳'];
+    const imageKeywords = ['圖片', '設施', '游泳池', '健身房', '大廳'];
 
     for (const event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
