@@ -1,5 +1,5 @@
 import { Client } from '@line/bot-sdk';
-import { getImageUrlsByKeyword } from '../../grokmain.js';
+import { createClient } from '@supabase/supabase-js';
 
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -8,11 +8,29 @@ const lineConfig = {
 
 const client = new Client(lineConfig);
 
+// ✅ Supabase 初始化
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
 export const config = {
   api: {
     bodyParser: false,
   },
 };
+
+// ✅ 查詢圖片資料
+async function getImageUrlsByKeyword(keyword) {
+  const { data, error } = await supabase
+    .from('image')
+    .select('url, description')
+    .ilike('description', `%${keyword}%`); // 用 description 模糊搜尋
+
+  if (error) {
+    console.error('Supabase 查詢錯誤:', error);
+    return [];
+  }
+
+  return data || [];
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -53,79 +71,52 @@ export default async function handler(req, res) {
 
         console.log('使用者輸入:', userText);
 
-        // ✅ 1. 公共設施 → 回傳三張固定卡片
+        // ✅ 1. 公共設施 → 從 Supabase 抓取圖片
         if (userText.includes('公共設施')) {
+          const imageData = await getImageUrlsByKeyword('公共設施');
+
+          if (!imageData || imageData.length === 0) {
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '目前沒有找到公共設施圖片，請稍後再試。',
+            });
+            continue;
+          }
+
           const carouselMessage = {
             type: 'flex',
             altText: '公共設施資訊',
             contents: {
               type: 'carousel',
-              contents: [
-                {
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: 'https://example.com/gym.jpg',
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [
-                      { type: 'text', text: '健身房\n開放時間：06:00 - 22:00', wrap: true }
-                    ]
-                  }
+              contents: imageData.map(item => ({
+                type: 'bubble',
+                hero: {
+                  type: 'image',
+                  url: item.url,
+                  size: 'full',
+                  aspectRatio: '20:13',
+                  aspectMode: 'cover'
                 },
-                {
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: 'https://example.com/pool.jpg',
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [
-                      { type: 'text', text: '游泳池\n開放時間：08:00 - 20:00', wrap: true }
-                    ]
-                  }
-                },
-                {
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: 'https://example.com/lounge.jpg',
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [
-                      { type: 'text', text: '交誼廳\n開放時間：全天', wrap: true }
-                    ]
-                  }
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  contents: [
+                    { type: 'text', text: item.description || '公共設施', wrap: true }
+                  ]
                 }
-              ]
+              }))
             }
           };
 
           await client.replyMessage(replyToken, carouselMessage);
-          continue; // ✅ 這裡可以保留，因為在 for loop 裡
+          continue;
         }
 
         // ✅ 2. 圖片關鍵字 → 查 Supabase
         else if (imageKeywords.some(kw => userText.includes(kw))) {
           const imageData = await getImageUrlsByKeyword(userText);
-          console.log('Supabase 查詢結果:', imageData);
 
-          if (imageData.length === 0) {
+          if (!imageData || imageData.length === 0) {
             await client.replyMessage(replyToken, {
               type: 'text',
               text: '目前沒有找到相關圖片，請稍後再試。',
