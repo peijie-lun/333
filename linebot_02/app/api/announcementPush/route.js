@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 // 初始化 LINE Bot SDK
-const lineClient = new Client({
+const lineClient = new Client({                                                      
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN
 });
 
