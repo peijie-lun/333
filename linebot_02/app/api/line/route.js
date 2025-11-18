@@ -1,5 +1,8 @@
 import { Client } from '@line/bot-sdk';
-import { getImageUrlsByKeyword } from '@/grokmain.js'; // 確認路徑正確
+import path from 'path';
+import { exec } from 'child_process';
+import { getImageUrlsByKeyword } from '../../../grokmain.js'; // 確認 ESM export
+import { fetchData } from '../../../supabase_fetch.js'; // 若有其他函數也可以 import
 
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -8,10 +11,9 @@ const lineConfig = {
 
 const client = new Client(lineConfig);
 
-// ✅ App Router 不需要 bodyParser 設定，直接處理 Request
 export async function POST(req) {
   try {
-    const rawBody = await req.text(); // 讀取原始 body
+    const rawBody = await req.text();
     if (!rawBody) {
       console.error('Webhook error: Empty body');
       return new Response('Bad Request: Empty body', { status: 400 });
@@ -35,7 +37,7 @@ export async function POST(req) {
 
         console.log('使用者輸入:', userText);
 
-        // ✅ 1. 公共設施 → 回傳固定卡片
+        // 1️⃣ 公共設施
         if (userText.includes('公共設施')) {
           const carouselMessage = {
             type: 'flex',
@@ -55,9 +57,7 @@ export async function POST(req) {
                   body: {
                     type: 'box',
                     layout: 'vertical',
-                    contents: [
-                      { type: 'text', text: '健身房\n開放時間：06:00 - 22:00', wrap: true }
-                    ]
+                    contents: [{ type: 'text', text: '健身房\n開放時間：06:00 - 22:00', wrap: true }]
                   }
                 },
                 {
@@ -72,9 +72,7 @@ export async function POST(req) {
                   body: {
                     type: 'box',
                     layout: 'vertical',
-                    contents: [
-                      { type: 'text', text: '游泳池\n開放時間：08:00 - 20:00', wrap: true }
-                    ]
+                    contents: [{ type: 'text', text: '游泳池\n開放時間：08:00 - 20:00', wrap: true }]
                   }
                 },
                 {
@@ -89,9 +87,7 @@ export async function POST(req) {
                   body: {
                     type: 'box',
                     layout: 'vertical',
-                    contents: [
-                      { type: 'text', text: '大廳\n開放時間：全天', wrap: true }
-                    ]
+                    contents: [{ type: 'text', text: '大廳\n開放時間：全天', wrap: true }]
                   }
                 }
               ]
@@ -102,16 +98,13 @@ export async function POST(req) {
           continue;
         }
 
-        // ✅ 2. 圖片關鍵字 → 查 Supabase
-        else if (imageKeywords.some(kw => userText.includes(kw))) {
+        // 2️⃣ 圖片關鍵字 → Supabase 查詢
+        if (imageKeywords.some(kw => userText.includes(kw))) {
           const imageData = await getImageUrlsByKeyword(userText);
           console.log('Supabase 查詢結果:', imageData);
 
-          if (imageData.length === 0) {
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: '目前沒有找到相關圖片，請稍後再試。',
-            });
+          if (!imageData || imageData.length === 0) {
+            await client.replyMessage(replyToken, { type: 'text', text: '目前沒有找到相關圖片，請稍後再試。' });
           } else {
             const carouselMessage = {
               type: 'flex',
@@ -130,9 +123,7 @@ export async function POST(req) {
                   body: {
                     type: 'box',
                     layout: 'vertical',
-                    contents: [
-                      { type: 'text', text: item.description || '圖片', wrap: true }
-                    ]
+                    contents: [{ type: 'text', text: item.description || '圖片', wrap: true }]
                   }
                 }))
               }
@@ -143,38 +134,34 @@ export async function POST(req) {
           continue;
         }
 
-        // ✅ 3. 其他 → 呼叫 LLM API
-        else {
-          try {
-            const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ query: userText }),
-            });
+        // 3️⃣ 其他 → 呼叫 LLM API
+        try {
+          const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: userText })
+          });
 
-            if (!response.ok) {
-              console.error('LLM API 回傳錯誤:', await response.text());
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '查詢失敗，請稍後再試。',
-              });
-            } else {
-              const result = await response.json();
-              const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
-
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: replyMessage
-              });
-            }
-          } catch (err) {
-            console.error('查詢 LLM API 失敗:', err);
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: '查詢失敗，請稍後再試。',
-            });
+          if (!response.ok) {
+            console.error('LLM API 回傳錯誤:', await response.text());
+            await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
+          } else {
+            const result = await response.json();
+            const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
+            await client.replyMessage(replyToken, { type: 'text', text: replyMessage });
           }
+        } catch (err) {
+          console.error('查詢 LLM API 失敗:', err);
+          await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
         }
+
+        // 4️⃣ 可選：呼叫 Python embedding
+        const pythonPath = path.resolve('./embedding.py');
+        exec(`python ${pythonPath}`, (err, stdout, stderr) => {
+          if (err) console.error('Python embedding 執行失敗:', err);
+          if (stdout) console.log('Python embedding output:', stdout);
+          if (stderr) console.error('Python embedding stderr:', stderr);
+        });
       }
     }
 
@@ -183,4 +170,9 @@ export async function POST(req) {
     console.error('Webhook error:', err);
     return new Response('Internal Server Error', { status: 500 });
   }
+}
+
+// GET 方法回傳 405
+export async function GET(req) {
+  return new Response('Method Not Allowed', { status: 405 });
 }
