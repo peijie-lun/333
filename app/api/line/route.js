@@ -1,5 +1,5 @@
 import { Client } from '@line/bot-sdk';
-import { getImageUrlsByKeyword } from '../../../grokmain.js';
+import { getImageUrlsByKeyword, generateAnswer } from '../../../grokmain.js';
 
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -29,7 +29,7 @@ export async function POST(req) {
 
         console.log('使用者輸入:', userText);
 
-        // 1️⃣ 公共設施 → 固定 Flex Message
+        // ✅ 1. 公共設施 → 固定 Flex Message
         if (userText.includes('公共設施')) {
           const carouselMessage = {
             type: 'flex',
@@ -90,7 +90,7 @@ export async function POST(req) {
           continue;
         }
 
-        // 2️⃣ 圖片關鍵字 → Supabase 查詢
+        // ✅ 2. 圖片關鍵字 → Supabase 查詢
         if (imageKeywords.some(kw => userText.includes(kw))) {
           const imageData = await getImageUrlsByKeyword(userText);
           console.log('Supabase 查詢結果:', imageData);
@@ -126,21 +126,11 @@ export async function POST(req) {
           continue;
         }
 
-        // 3️⃣ 其他 → 呼叫 LLM API
+        // ✅ 3. 其他 → 呼叫 LLM API (Groq)
         try {
-          const response = await fetch(`${process.env.VERCEL_URL}/api/llm`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: userText })
-          });
-
-          if (!response.ok) {
-            await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
-          } else {
-            const result = await response.json();
-            const replyMessage = result.answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
-            await client.replyMessage(replyToken, { type: 'text', text: replyMessage });
-          }
+          const answer = await generateAnswer(userText);
+          const replyMessage = answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
+          await client.replyMessage(replyToken, { type: 'text', text: replyMessage });
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
           await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });

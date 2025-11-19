@@ -4,41 +4,39 @@ import path from 'path';
 import fs from 'fs';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
+import { createClient } from '@supabase/supabase-js';
 
 // 修正 __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 明確指定 .env 路徑
+// 載入環境變數
 dotenv.config({ path: path.join(__dirname, '.env') });
 
-// 可選:整合自動同步功能
-const USE_AUTO_SYNC = process.env.USE_AUTO_SYNC === 'true';
-if (USE_AUTO_SYNC) {
-  (async () => {
-    const { startAutoSync } = await import('./supabase_auto_sync.js');
-    try {
-      await startAutoSync();
-      console.log('✅ 自動同步已啟動');
-    } catch (err) {
-      console.error('❌ 自動同步啟動失敗:', err);
+// 初始化 Supabase
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+// ✅ 新增：圖片查詢函式
+export async function getImageUrlsByKeyword(keyword) {
+  try {
+    const { data, error } = await supabase
+      .from('image') // 你的資料表名稱
+      .select('url, description')
+      .ilike('description', `%${keyword}%`);
+
+    if (error) {
+      console.error('Supabase 查詢錯誤:', error);
+      return [];
     }
-  })();
-}
-
-// 檢查快取是否存在
-const cachePath = path.join(__dirname, 'supabase_embeddings.json');
-if (!fs.existsSync(cachePath)) {
-  console.log('⚠️ 快取不存在,執行初始載入...');
-  const supabasePath = path.join(__dirname, 'supabase_fetch.js');
-  const supabaseResult = spawnSync('node', [supabasePath], { stdio: 'inherit' });
-  if (supabaseResult.error || supabaseResult.status !== 0) {
-    console.error('❌ 執行 supabase_fetch.js 失敗');
+    return data || [];
+  } catch (err) {
+    console.error('getImageUrlsByKeyword 發生錯誤:', err);
+    return [];
   }
-} else {
-  console.log('✅ 使用現有快取');
 }
 
+// ✅ 保留原本的 LLM embedding 功能
+const cachePath = path.join(__dirname, 'supabase_embeddings.json');
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL;
 
@@ -53,18 +51,13 @@ async function getEmbedding(text) {
       console.error('Python embedding.py 執行錯誤:', py.stderr);
       return null;
     }
-    try {
-      return JSON.parse(py.stdout);
-    } catch {
-      console.error('embedding.py 回傳格式解析失敗:', py.stdout);
-      return null;
-    }
+    return JSON.parse(py.stdout);
   } catch (error) {
     console.error('Error getting embedding:', error);
   }
 }
 
-async function generateAnswer(query) {
+export async function generateAnswer(query) {
   const queryEmbedding = await getEmbedding(query);
   if (!queryEmbedding) {
     console.error('查詢向量生成失敗');
@@ -104,13 +97,6 @@ async function generateAnswer(query) {
   scored.sort((a, b) => b.sim - a.sim);
   const top3 = scored.slice(0, 3);
 
-  console.log('--- 查詢相似度前3參考資料 ---');
-  top3.forEach((item, idx) => {
-    console.log(`#${idx + 1} 相似度:`, item.sim);
-    console.log(item.chunk.content);
-    console.log('-----------------------------');
-  });
-
   let mostRelevantChunk = top3[0].chunk;
   let maxSim = top3[0].sim;
 
@@ -123,24 +109,15 @@ async function generateAnswer(query) {
       }
     }
     const keywordSet = new Set(ngrams);
-    console.log('[fallback debug] 關鍵字（含詞組）：', Array.from(keywordSet));
     const fallbackChunks = contextChunks.filter(chunk => {
       return Array.from(keywordSet).some(kw => chunk.content.includes(kw));
     });
-    console.log('[fallback debug] 命中數：', fallbackChunks.length);
     if (fallbackChunks.length > 0) {
-      console.log('--- fallback 關鍵字命中 ---');
-      const kwArr = Array.from(keywordSet);
-      let grouped = [];
-      kwArr.forEach(kw => {
+      const grouped = Array.from(keywordSet).map(kw => {
         const hits = contextChunks.filter(chunk => chunk.content.includes(kw));
-        if (hits.length > 0) {
-          grouped.push(`【${kw}】\n` + hits.map(c => c.content).join('\n'));
-        }
-      });
+        return hits.length > 0 ? `【${kw}】\n` + hits.map(c => c.content).join('\n') : '';
+      }).filter(Boolean);
       mostRelevantChunk = { content: grouped.join('\n---\n') };
-    } else {
-      console.log('--- fallback 也沒命中任何資料 ---');
     }
   }
 
@@ -150,7 +127,7 @@ async function generateAnswer(query) {
       {
         model: GROQ_MODEL,
         messages: [
-          { role: "system", content: "你是檢索增強型助理，回答一律使用繁體中文，只能根據參考資料回答，不可補充或推測任何未在參考資料中的內容。即使相關度低，也請根據參考資料盡量回答。" },
+          { role: "system", content: "你是檢索增強型助理，回答一律使用繁體中文，只能根據參考資料回答，不可補充或推測任何未在參考資料中的內容。" },
           { role: "user", content: `問題：${query}\n\n參考資料：${mostRelevantChunk.content}` }
         ]
       },
@@ -160,15 +137,9 @@ async function generateAnswer(query) {
         }
       }
     );
-    if (response.data?.choices?.[0]?.message?.content) {
-      console.log('Answer:', response.data.choices[0].message.content);
-    } else {
-      console.error('Groq API 回傳格式異常:', response.data);
-    }
+    return response.data?.choices?.[0]?.message?.content || '無法取得答案';
   } catch (error) {
     console.error('Groq API 錯誤:', error.response?.data || error);
+    return '查詢失敗';
   }
 }
-
-// 查詢
-generateAnswer('可不可以養寵物?');
