@@ -11,18 +11,31 @@ const lineConfig = {
 
 const client = new Client(lineConfig);
 
+// ✅ 如果不需要 POST，可以刪掉，否則加上邏輯
 export async function POST(req) {
-  // 你的 LINE webhook 邏輯
+  return new Response('POST not implemented', { status: 501 });
 }
 
+// ✅ GET：測試 LLM API
 export async function GET() {
-  // ✅ 合併邏輯：回傳 LLM 測試結果
   try {
-    const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
+    const apiUrl = process.env.VERCEL_URL
+      ? `${process.env.VERCEL_URL}/api/llm`
+      : 'http://localhost:3000/api/llm';
+
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: '這是一個測試問題，請回覆測試成功。' }),
     });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return new Response(
+        JSON.stringify({ error: 'LLM API 回應錯誤', details: errorText }),
+        { status: 500 }
+      );
+    }
 
     const result = await response.json();
 
