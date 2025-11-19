@@ -1,153 +1,91 @@
-import { Client } from '@line/bot-sdk';
-import { getImageUrlsByKeyword, generateAnswer } from '../../../grokmain.js';
+import { Client } from "@line/bot-sdk";
+import { getImageUrlsByKeyword, generateAnswer } from "@/lib/grokmain";
+import { IMAGE_KEYWORDS } from "@/utils/keywords";
+import {
+  facilityCarousel,
+  buildImageCarousel,
+} from "@/utils/lineMessage";
 
-// ✅ 強制使用 Node.js Runtime
-export const runtime = 'nodejs';
+// 強制 Node.js runtime
+export const runtime = "nodejs";
 
-const lineConfig = {
+const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-const client = new Client(lineConfig);
+const client = new Client(config);
 
 export async function POST(req) {
   try {
     const rawBody = await req.text();
-    if (!rawBody) return new Response('Bad Request: Empty body', { status: 400 });
+    if (!rawBody)
+      return new Response("Bad Request: Empty body", { status: 400 });
 
     let events;
     try {
       events = JSON.parse(rawBody).events;
     } catch {
-      return new Response('Bad Request: Invalid JSON', { status: 400 });
+      return new Response("Bad Request: Invalid JSON", { status: 400 });
     }
 
-    const imageKeywords = ['圖片', '設施', '游泳池', '健身房', '大廳'];
-
     for (const event of events) {
-      if (event.type === 'message' && event.message.type === 'text') {
-        const userText = event.message.text.trim();
-        const replyToken = event.replyToken;
+      if (event.type !== "message" || event.message.type !== "text")
+        continue;
 
-        console.log('使用者輸入:', userText);
+      const userText = event.message.text.trim();
+      const replyToken = event.replyToken;
 
-        // ✅ 1. 公共設施 → 固定 Flex Message
-        if (userText.includes('公共設施')) {
-          const carouselMessage = {
-            type: 'flex',
-            altText: '公共設施資訊',
-            contents: {
-              type: 'carousel',
-              contents: [
-                {
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: 'https://today-obs.line-scdn.net/0h-NdfKUUZcmFZH1sCDogNNmNJcQ5qc2FiPSkjYhpxLFUjLjAzNSs8D3pKfgZ1KTU_Ny44D34WaVAmKjQ-ZSo8/w1200',
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [{ type: 'text', text: '健身房\n開放時間：06:00 - 22:00', wrap: true }]
-                  }
-                },
-                {
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: 'https://www.ytyut.com/uploads/news/1000/3/d3156e6f-9126-46cd.jpg',
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [{ type: 'text', text: '游泳池\n開放時間：08:00 - 20:00', wrap: true }]
-                  }
-                },
-                {
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: 'https://www.gogo-engineering.com/store_image/ydplan/file/D1695800312494.jpg',
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [{ type: 'text', text: '大廳\n開放時間：全天', wrap: true }]
-                  }
-                }
-              ]
-            }
-          };
+      console.log("使用者輸入:", userText);
 
-          await client.replyMessage(replyToken, carouselMessage);
-          continue;
+      // 1️⃣ 公共設施：固定 Flex
+      if (userText.includes("公共設施")) {
+        await client.replyMessage(replyToken, facilityCarousel());
+        continue;
+      }
+
+      // 2️⃣ 圖片查詢：Supabase
+      if (IMAGE_KEYWORDS.some((kw) => userText.includes(kw))) {
+        const images = await getImageUrlsByKeyword(userText);
+
+        if (!images || images.length === 0) {
+          await client.replyMessage(replyToken, {
+            type: "text",
+            text: "目前沒有找到相關圖片喔～",
+          });
+        } else {
+          await client.replyMessage(
+            replyToken,
+            buildImageCarousel(images)
+          );
         }
+        continue;
+      }
 
-        // ✅ 2. 圖片關鍵字 → Supabase 查詢
-        if (imageKeywords.some(kw => userText.includes(kw))) {
-          const imageData = await getImageUrlsByKeyword(userText);
-          console.log('Supabase 查詢結果:', imageData);
-
-          if (!imageData || imageData.length === 0) {
-            await client.replyMessage(replyToken, { type: 'text', text: '目前沒有找到相關圖片，請稍後再試。' });
-          } else {
-            const carouselMessage = {
-              type: 'flex',
-              altText: '圖片資訊',
-              contents: {
-                type: 'carousel',
-                contents: imageData.map(item => ({
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: item.url,
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [{ type: 'text', text: item.description || '圖片', wrap: true }]
-                  }
-                }))
-              }
-            };
-
-            await client.replyMessage(replyToken, carouselMessage);
-          }
-          continue;
-        }
-
-        // ✅ 3. 其他 → 呼叫 LLM API (Groq)
-        try {
-          const answer = await generateAnswer(userText);
-          const replyMessage = answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
-          await client.replyMessage(replyToken, { type: 'text', text: replyMessage });
-        } catch (err) {
-          console.error('查詢 LLM API 失敗:', err);
-          await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
-        }
+      // 3️⃣ 其他 → LLM（Groq）
+      try {
+        const answer = await generateAnswer(userText);
+        await client.replyMessage(replyToken, {
+          type: "text",
+          text:
+            answer?.trim() || "目前查不到資訊，可以查看社區公告喔～",
+        });
+      } catch (error) {
+        console.error("LLM API 錯誤:", error);
+        await client.replyMessage(replyToken, {
+          type: "text",
+          text: "查詢失敗，請稍後再試。",
+        });
       }
     }
 
-    return new Response('OK', { status: 200 });
-  } catch (err) {
-    console.error('Webhook error:', err);
-    return new Response('Internal Server Error', { status: 500 });
+    return new Response("OK", { status: 200 });
+  } catch (error) {
+    console.error("Webhook error:", error);
+    return new Response("Internal Server Error", { status: 500 });
   }
 }
 
 export async function GET() {
-  return new Response('Method Not Allowed', { status: 405 });
+  return new Response("Method Not Allowed", { status: 405 });
 }
