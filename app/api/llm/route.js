@@ -17,9 +17,9 @@ export async function POST(req) {
       return new Response(JSON.stringify({ error: 'Missing or invalid query' }), { status: 400 });
     }
 
-    const cachePath = path.resolve('./supabase_embeddings.json');
+    const cachePath = path.join(process.cwd(), 'supabase_embeddings.json');
     if (!fs.existsSync(cachePath)) {
-      return new Response(JSON.stringify({ error: '快取檔案不存在' }), { status: 500 });
+      return new Response(JSON.stringify({ error: '快取檔案不存在，請先執行資料同步。' }), { status: 500 });
     }
 
     const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
@@ -43,7 +43,7 @@ export async function POST(req) {
     }
 
     if (!imageUrl) {
-      imageUrl = 'https://example.com/default.jpg';
+      imageUrl = 'https://your-default-image-url.com/default.jpg'; // ✅ 改成你的預設圖片
     }
 
     // ✅ 呼叫 Groq API
@@ -69,10 +69,7 @@ export async function POST(req) {
       }
     );
 
-    let answer = response.data?.choices?.[0]?.message?.content?.trim();
-    if (!answer || answer.length < 2) {
-      answer = '目前沒有找到相關資訊，請查看社區公告。';
-    }
+    const answer = response.data?.choices?.[0]?.message?.content?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
 
     return new Response(JSON.stringify({ answer, image: imageUrl }), { status: 200 });
   } catch (error) {
