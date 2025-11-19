@@ -44,7 +44,7 @@ export async function POST(req) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`
       },
-      body: JSON.stringify({
+      body: JSON.stringify({                       
         to: 'U5dbd8b5fb153630885b656bb5f8ae011', // 指定的 LINE User ID
         messages: [
           {
