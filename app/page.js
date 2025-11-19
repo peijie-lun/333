@@ -58,7 +58,7 @@ export default function HomePage() {
         <input
           type="text"
           placeholder="發布者"
-          value={author}
+          value={author}                                            
           onChange={(e) => setAuthor(e.target.value)}
           required
         />
