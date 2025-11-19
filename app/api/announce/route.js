@@ -1,5 +1,26 @@
 import { createClient } from '@supabase/supabase-js';
 
+import { Client } from '@line/bot-sdk';
+
+
+// ✅ 強制使用 Node.js Runtime
+export const runtime = 'nodejs';
+
+const lineConfig = {
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
+};
+
+const client = new Client(lineConfig);
+
+export async function POST(req) {
+  // 你的邏輯
+}
+
+export async function GET() {
+  return new Response('Method Not Allowed', { status: 405 });
+}
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY

@@ -1,5 +1,8 @@
 import { Client } from '@line/bot-sdk';
 
+// ✅ 強制使用 Node.js Runtime
+export const runtime = 'nodejs';
+
 const lineClient = new Client({
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN
 });

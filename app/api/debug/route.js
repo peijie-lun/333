@@ -1,3 +1,23 @@
+import { Client } from '@line/bot-sdk';
+import { getImageUrlsByKeyword, generateAnswer } from '../../../grokmain.js';
+
+// ✅ 強制使用 Node.js Runtime
+export const runtime = 'nodejs';
+
+const lineConfig = {
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
+};
+
+const client = new Client(lineConfig);
+
+export async function POST(req) {
+  // 你的邏輯
+}
+
+export async function GET() {
+  return new Response('Method Not Allowed', { status: 405 });
+}
 export async function GET() {
   try {
     const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {

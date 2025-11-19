@@ -2,6 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
 
+// ✅ 強制使用 Node.js Runtime
+export const runtime = 'nodejs';
+
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL;
 

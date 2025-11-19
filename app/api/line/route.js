@@ -1,6 +1,9 @@
 import { Client } from '@line/bot-sdk';
 import { getImageUrlsByKeyword, generateAnswer } from '../../../grokmain.js';
 
+// ✅ 強制使用 Node.js Runtime
+export const runtime = 'nodejs';
+
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
