@@ -29,7 +29,13 @@ function getEmbedding(text) {
 	}
 }
 
-async function fetchAndCache() {
+async function fetchAndCache(forceUpdate = false) {
+		// 如果有 --force 參數,清空快取
+		if (forceUpdate && fs.existsSync(cachePath)) {
+			console.log('🔄 強制更新模式:清除舊快取');
+			fs.unlinkSync(cachePath);
+		}
+		
 		// 預設 FAQ
 		const defaultFaqs = [
 			'本大樓禁止飼養寵物，違者將依規定處理。',
@@ -73,16 +79,32 @@ async function fetchAndCache() {
 			console.log('knowledge table 無資料');
 			return;
 		}
+	// 讀取現有快取
 	let cache = {};
 	if (fs.existsSync(cachePath)) {
 		try {
 			cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
 		} catch {}
 	}
-		let updated = false;
-		for (const row of data) {
-			const key = String(row.id);
-			if (!cache[key] || cache[key].content !== row.content) {
+	
+	// 取得資料庫中所有的 ID
+	const dbIds = new Set(data.map(row => String(row.id)));
+	
+	// 刪除快取中已不存在於資料庫的項目
+	let cleaned = false;
+	for (const cachedId in cache) {
+		// 只清理非圖片的項目 (圖片項目以 img_ 開頭)
+		if (!cachedId.startsWith('img_') && !dbIds.has(cachedId)) {
+			delete cache[cachedId];
+			cleaned = true;
+			console.log(`🗑️ 已清除過期快取: id=${cachedId}`);
+		}
+	}
+	
+	let updated = false;
+	for (const row of data) {
+		const key = String(row.id);
+		if (!cache[key] || cache[key].content !== row.content) {
 				const embedding = getEmbedding(row.content);
 				if (embedding) {
 					cache[key] = { content: row.content, embedding };
@@ -93,13 +115,13 @@ async function fetchAndCache() {
 				}
 			}
 		}
-		if (updated) {
+		if (updated || cleaned) {
 			fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf-8');
-			console.log('supabase_embeddings.json 已更新');
+			console.log('✅ supabase_embeddings.json 已更新');
 		} else {
-			console.log('所有 embedding 已是最新');
+			console.log('✨ 所有 embedding 已是最新');
 		}
-		console.log('快取成功 id：', Object.keys(cache));
+		console.log('📦 快取成功 id：', Object.keys(cache).filter(k => !k.startsWith('img_')));
 
 	// 抓取圖片 URL 資料
 	const { data: imageData, error: imageError } = await supabase
@@ -114,7 +136,21 @@ async function fetchAndCache() {
 			console.log(`  - ID: ${img.id}, URL: ${img.url}, 描述: ${img.description || '無'}`);
 		});
 		
+		// 取得資料庫中所有的圖片 ID
+		const dbImageIds = new Set(imageData.map(img => `img_${img.id}`));
+		
+		// 清理已刪除的圖片快取
+		let imageCleaned = false;
+		for (const cachedId in cache) {
+			if (cachedId.startsWith('img_') && !dbImageIds.has(cachedId)) {
+				delete cache[cachedId];
+				imageCleaned = true;
+				console.log(`🗑️ 已清除過期圖片快取: ${cachedId}`);
+			}
+		}
+		
 		// 將圖片資料也加入 cache，方便 AI 查詢
+		let imageUpdated = false;
 		for (const img of imageData) {
 			const imgKey = `img_${img.id}`;
 			const imgContent = `圖片: ${img.description || '無描述'}\nURL: ${img.url}`;
@@ -122,15 +158,20 @@ async function fetchAndCache() {
 				const embedding = getEmbedding(imgContent);
 				if (embedding) {
 					cache[imgKey] = { content: imgContent, embedding, type: 'image', url: img.url };
-					console.log(`已加入圖片 embedding: ${imgKey}`);
+					imageUpdated = true;
+					console.log(`🖼️ 已加入圖片 embedding: ${imgKey}`);
 				}
 			}
 		}
 		
 		// 更新快取檔案
-		fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf-8');
-		console.log('圖片資料已加入快取');
+		if (imageUpdated || imageCleaned) {
+			fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf-8');
+			console.log('✅ 圖片資料已加入快取');
+		}
 	}
 }
 
-fetchAndCache();
+// 檢查命令列參數是否有 --force
+const forceUpdate = process.argv.includes('--force');
+fetchAndCache(forceUpdate);

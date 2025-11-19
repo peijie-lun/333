@@ -1,5 +1,5 @@
 // 檢查 supabase_embeddings.json 中的圖片資料
-const cache = require('../supabase_embeddings.json');
+const cache = require('./supabase_embeddings.json');
 
 const imgKeys = Object.keys(cache).filter(k => k.startsWith('img_'));
 
