@@ -1,4 +1,4 @@
-import { generateAnswer } from "../../../grokmain.js";
+import { generateAnswer } from "../../lib/grokmain.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
