@@ -12,13 +12,11 @@ const lineConfig = {
 const client = new Client(lineConfig);
 
 export async function POST(req) {
-  // 你的邏輯
+  // 你的 LINE webhook 邏輯
 }
 
 export async function GET() {
-  return new Response('Method Not Allowed', { status: 405 });
-}
-export async function GET() {
+  // ✅ 合併邏輯：回傳 LLM 測試結果
   try {
     const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
       method: 'POST',
