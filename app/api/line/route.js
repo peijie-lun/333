@@ -1,8 +1,7 @@
-// app/api/line/route.js
 import { Client } from '@line/bot-sdk';
-import { getImageUrlsByKeyword, generateAnswer } from '../../../lib/grokmain.js';
+import { generateAnswer } from '../../../lib/grokmain.js'; // 你的 ES Module grokmain
+import 'dotenv/config';
 
-// 強制 Node.js Runtime
 export const runtime = 'nodejs';
 
 const lineConfig = {
@@ -12,8 +11,7 @@ const lineConfig = {
 
 const client = new Client(lineConfig);
 
-// 圖片關鍵字列表
-const imageKeywords = ['圖片', '設施', '游泳池', '健身房', '大廳'];
+const IMAGE_KEYWORDS = ['圖片', '設施', '游泳池', '健身房', '大廳'];
 
 export async function POST(req) {
   try {
@@ -90,46 +88,18 @@ export async function POST(req) {
               ]
             }
           };
+
           await client.replyMessage(replyToken, carouselMessage);
           continue;
         }
 
-        // 2️⃣ 圖片關鍵字 → Supabase 查詢
-        if (imageKeywords.some(kw => userText.includes(kw))) {
-          const imageData = await getImageUrlsByKeyword(userText);
-          console.log('Supabase 查詢結果:', imageData);
-
-          if (!imageData || imageData.length === 0) {
-            await client.replyMessage(replyToken, { type: 'text', text: '目前沒有找到相關圖片，請稍後再試。' });
-          } else {
-            const carouselMessage = {
-              type: 'flex',
-              altText: '圖片資訊',
-              contents: {
-                type: 'carousel',
-                contents: imageData.map(item => ({
-                  type: 'bubble',
-                  hero: {
-                    type: 'image',
-                    url: item.url,
-                    size: 'full',
-                    aspectRatio: '20:13',
-                    aspectMode: 'cover'
-                  },
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    contents: [{ type: 'text', text: item.description || '圖片', wrap: true }]
-                  }
-                }))
-              }
-            };
-            await client.replyMessage(replyToken, carouselMessage);
-          }
+        // 2️⃣ 圖片關鍵字 → 目前回覆暫時文字提示 (可改成 Supabase 查詢)
+        if (IMAGE_KEYWORDS.some(kw => userText.includes(kw))) {
+          await client.replyMessage(replyToken, { type: 'text', text: '目前圖片查詢功能尚未啟用。' });
           continue;
         }
 
-        // 3️⃣ 其他文字 → 呼叫 Groq LLM
+        // 3️⃣ 其他 → 呼叫 Groq LLM
         try {
           const answer = await generateAnswer(userText);
           const replyMessage = answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
