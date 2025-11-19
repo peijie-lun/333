@@ -1,8 +1,5 @@
 import { Client } from '@line/bot-sdk';
-import path from 'path';
-import { exec } from 'child_process';
-import { getImageUrlsByKeyword } from '../../../grokmain.js'; // 確認 ESM export
-import { fetchData } from '../../../supabase_fetch.js'; // 若有其他函數也可以 import
+import { getImageUrlsByKeyword } from '../../../grokmain.js';
 
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -14,17 +11,12 @@ const client = new Client(lineConfig);
 export async function POST(req) {
   try {
     const rawBody = await req.text();
-    if (!rawBody) {
-      console.error('Webhook error: Empty body');
-      return new Response('Bad Request: Empty body', { status: 400 });
-    }
+    if (!rawBody) return new Response('Bad Request: Empty body', { status: 400 });
 
     let events;
     try {
-      const parsed = JSON.parse(rawBody);
-      events = parsed.events;
-    } catch (err) {
-      console.error('Webhook error: Invalid JSON', err);
+      events = JSON.parse(rawBody).events;
+    } catch {
       return new Response('Bad Request: Invalid JSON', { status: 400 });
     }
 
@@ -37,7 +29,7 @@ export async function POST(req) {
 
         console.log('使用者輸入:', userText);
 
-        // 1️⃣ 公共設施
+        // 1️⃣ 公共設施 → 固定 Flex Message
         if (userText.includes('公共設施')) {
           const carouselMessage = {
             type: 'flex',
@@ -136,14 +128,13 @@ export async function POST(req) {
 
         // 3️⃣ 其他 → 呼叫 LLM API
         try {
-          const response = await fetch('https://333-psi-seven.vercel.app/api/llm', {
+          const response = await fetch(`${process.env.VERCEL_URL}/api/llm`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: userText })
           });
 
           if (!response.ok) {
-            console.error('LLM API 回傳錯誤:', await response.text());
             await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
           } else {
             const result = await response.json();
@@ -154,14 +145,6 @@ export async function POST(req) {
           console.error('查詢 LLM API 失敗:', err);
           await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
         }
-
-        // 4️⃣ 可選：呼叫 Python embedding
-        const pythonPath = path.resolve('./embedding.py');
-        exec(`python ${pythonPath}`, (err, stdout, stderr) => {
-          if (err) console.error('Python embedding 執行失敗:', err);
-          if (stdout) console.log('Python embedding output:', stdout);
-          if (stderr) console.error('Python embedding stderr:', stderr);
-        });
       }
     }
 
@@ -172,7 +155,6 @@ export async function POST(req) {
   }
 }
 
-// GET 方法回傳 405
-export async function GET(req) {
+export async function GET() {
   return new Response('Method Not Allowed', { status: 405 });
 }

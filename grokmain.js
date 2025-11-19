@@ -3,27 +3,31 @@ import { spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import axios from 'axios';
+import { fileURLToPath } from 'url';
+
+// 修正 __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // 明確指定 .env 路徑
 dotenv.config({ path: path.join(__dirname, '.env') });
 
-// 可選:整合自動同步功能 (適合長期運行的伺服器)
+// 可選:整合自動同步功能
 const USE_AUTO_SYNC = process.env.USE_AUTO_SYNC === 'true';
 if (USE_AUTO_SYNC) {
-  const { startAutoSync } = await import('./supabase_auto_sync.js');
-  startAutoSync()
-    .then(() => {
+  (async () => {
+    const { startAutoSync } = await import('./supabase_auto_sync.js');
+    try {
+      await startAutoSync();
       console.log('✅ 自動同步已啟動');
-    })
-    .catch(err => {
+    } catch (err) {
       console.error('❌ 自動同步啟動失敗:', err);
-    });
+    }
+  })();
 }
 
-// 檢查快取是否存在,不存在才執行初始載入
+// 檢查快取是否存在
 const cachePath = path.join(__dirname, 'supabase_embeddings.json');
-
-// 只有快取不存在時才執行初始載入,否則直接使用現有快取
 if (!fs.existsSync(cachePath)) {
   console.log('⚠️ 快取不存在,執行初始載入...');
   const supabasePath = path.join(__dirname, 'supabase_fetch.js');
@@ -50,9 +54,8 @@ async function getEmbedding(text) {
       return null;
     }
     try {
-      const embedding = JSON.parse(py.stdout);
-      return embedding;
-    } catch (e) {
+      return JSON.parse(py.stdout);
+    } catch {
       console.error('embedding.py 回傳格式解析失敗:', py.stdout);
       return null;
     }
@@ -129,13 +132,9 @@ async function generateAnswer(query) {
       console.log('--- fallback 關鍵字命中 ---');
       const kwArr = Array.from(keywordSet);
       let grouped = [];
-      kwArr.forEach((kw, idx) => {
+      kwArr.forEach(kw => {
         const hits = contextChunks.filter(chunk => chunk.content.includes(kw));
         if (hits.length > 0) {
-          console.log(`【${kw}】命中${hits.length}筆`);
-          hits.forEach((c, i) => {
-            console.log(`  #${i + 1}：`, c.content);
-          });
           grouped.push(`【${kw}】\n` + hits.map(c => c.content).join('\n'));
         }
       });
@@ -161,17 +160,13 @@ async function generateAnswer(query) {
         }
       }
     );
-    if (response.data && response.data.choices && response.data.choices[0] && response.data.choices[0].message && response.data.choices[0].message.content) {
+    if (response.data?.choices?.[0]?.message?.content) {
       console.log('Answer:', response.data.choices[0].message.content);
     } else {
       console.error('Groq API 回傳格式異常:', response.data);
     }
   } catch (error) {
-    if (error.response) {
-      console.error('Groq API 錯誤:', error.response.data);
-    } else {
-      console.error('Error generating answer:', error);
-    }
+    console.error('Groq API 錯誤:', error.response?.data || error);
   }
 }
 
