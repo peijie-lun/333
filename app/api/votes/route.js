@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 // 初始化 Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
+  process.env.SUPABASE_ANON_KEY
 );
 
 // POST: 新增投票並推播到 LINE
