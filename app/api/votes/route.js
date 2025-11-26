@@ -2,7 +2,11 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+// 初始化 Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 // POST: 新增投票並推播到 LINE
 export async function POST(req) {
@@ -10,6 +14,7 @@ export async function POST(req) {
     const body = await req.json();
     const { title, description, ends_at, author, options } = body;
 
+    // 驗證必要欄位
     if (!title || !author || !ends_at) {
       return NextResponse.json({ error: '缺少必要欄位' }, { status: 400 });
     }
@@ -59,7 +64,12 @@ async function sendLinePush(vote) {
             contents: [
               { type: 'text', text: '📢 新的投票', weight: 'bold', size: 'lg' },
               { type: 'text', text: `標題：${vote.title}`, wrap: true },
-              { type: 'text', text: `截止時間：${new Date(vote.ends_at).toLocaleString()}`, size: 'sm', color: '#999999' }
+              {
+                type: 'text',
+                text: `截止時間：${new Date(vote.ends_at).toLocaleString()}`,
+                size: 'sm',
+                color: '#999999'
+              }
             ]
           },
           footer: {
