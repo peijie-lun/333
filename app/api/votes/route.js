@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// 初始化 Supabase
+// 使用 Supabase Anon Key 初始化
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
@@ -40,16 +40,16 @@ export async function POST(req) {
     }
 
     // 推播到 LINE（固定使用者 ID）
-    await sendLinePush(data);
+    const pushResult = await sendLinePush(data);
 
-    return NextResponse.json({ success: true, vote: data }, { status: 200 });
+    return NextResponse.json({ success: true, vote: data, lineResponse: pushResult }, { status: 200 });
   } catch (err) {
     console.error('API 錯誤:', err);
     return NextResponse.json({ error: '伺服器錯誤' }, { status: 500 });
   }
 }
 
-// 推播到 LINE Bot
+// 推播到 LINE Bot（不含投票連結）
 async function sendLinePush(vote) {
   const message = {
     to: 'U5dbd8b5fb153630885b656bb5f8ae011', // 固定推播到這個使用者 ID
@@ -71,27 +71,13 @@ async function sendLinePush(vote) {
                 color: '#999999'
               }
             ]
-          },
-          footer: {
-            layout: 'vertical',
-            contents: [
-              {
-                type: 'button',
-                style: 'primary',
-                action: {
-                  type: 'uri',
-                  label: '立即投票',
-                  uri: `${process.env.VOTE_PAGE_URL}/${vote.id}`
-                }
-              }
-            ]
           }
         }
       }
     ]
   };
 
-  await fetch('https://api.line.me/v2/bot/message/push', {
+  const res = await fetch('https://api.line.me/v2/bot/message/push', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -99,4 +85,8 @@ async function sendLinePush(vote) {
     },
     body: JSON.stringify(message)
   });
+
+  const result = await res.json();
+  console.log('LINE API 回應:', result);
+  return result;
 }
