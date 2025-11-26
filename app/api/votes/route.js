@@ -1,26 +1,36 @@
 
-import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// 使用 Supabase Anon Key 初始化
+export const runtime = 'nodejs';
+
+// --- Supabase ---
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
 
-// POST: 新增投票並推播到 LINE
 export async function POST(req) {
   try {
     const body = await req.json();
-    const { title, description, ends_at, author, options } = body;
+    const { title, description, author, ends_at, options, test } = body;
 
-    // 驗證必要欄位
+    // 防呆：必填欄位
     if (!title || !author || !ends_at) {
-      return NextResponse.json({ error: '缺少必要欄位' }, { status: 400 });
+      return Response.json(
+        { error: 'title, author, ends_at 為必填' },
+        { status: 400 }
+      );
     }
 
-    // 插入 Supabase votes 表
-    const { data, error } = await supabase
+    const time = new Date().toLocaleString('zh-TW', { hour12: false });
+
+    // --- 測試模式 ---
+    if (test === true) {
+      return Response.json({ message: '投票測試成功' });
+    }
+
+    // --- 1. 儲存到 Supabase ---
+    const { error } = await supabase
       .from('votes')
       .insert([
         {
@@ -28,65 +38,56 @@ export async function POST(req) {
           description,
           ends_at,
           author,
-          options: options || ['同意', '反對', '棄權']
+          options: options || ['同意', '反對', '棄權'],
+          created_at: new Date().toISOString()
         }
-      ])
-      .select()
-      .single();
+      ]);
 
     if (error) {
       console.error('Supabase 插入錯誤:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return Response.json({ error }, { status: 500 });
     }
 
-    // 推播到 LINE（固定使用者 ID）
-    const pushResult = await sendLinePush(data);
+    // --- 2. 推播到 LINE ---
+    const lineUserId = 'U5dbd8b5fb153630885b656bb5f8ae011'; // 固定推播到這個 ID
 
-    return NextResponse.json({ success: true, vote: data, lineResponse: pushResult }, { status: 200 });
+    const pushBody = {
+      to: lineUserId,
+      messages: [
+        {
+          type: 'text',
+          text: `📢 新的投票\n標題：${title}\n說明：${description || '無'}\n截止時間：${ends_at}\n發布者：${author}\n時間：${time}`
+        }
+      ]
+    };
+
+    const lineRes = await fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`
+      },
+      body: JSON.stringify(pushBody)
+    });
+
+    if (!lineRes.ok) {
+      const errText = await lineRes.text();
+      console.error('LINE 推播失敗:', errText);
+      return Response.json({ error: errText }, { status: 500 });
+    }
+
+    // --- 最終成功回應 ---
+    return Response.json({ success: true });
+
   } catch (err) {
-    console.error('API 錯誤:', err);
-    return NextResponse.json({ error: '伺服器錯誤' }, { status: 500 });
+    console.error('votes POST 錯誤:', err);
+    return Response.json(
+      { error: 'Internal Server Error', details: err.message },
+      { status: 500 }
+    );
   }
 }
 
-// 推播到 LINE Bot（不含投票連結）
-async function sendLinePush(vote) {
-  const message = {
-    to: 'U5dbd8b5fb153630885b656bb5f8ae011', // 固定推播到這個使用者 ID
-    messages: [
-      {
-        type: 'flex',
-        altText: '新的投票已發布',
-        contents: {
-          type: 'bubble',
-          body: {
-            layout: 'vertical',
-            contents: [
-              { type: 'text', text: '📢 新的投票', weight: 'bold', size: 'lg' },
-              { type: 'text', text: `標題：${vote.title}`, wrap: true },
-              {
-                type: 'text',
-                text: `截止時間：${new Date(vote.ends_at).toLocaleString()}`,
-                size: 'sm',
-                color: '#999999'
-              }
-            ]
-          }
-        }
-      }
-    ]
-  };
-
-  const res = await fetch('https://api.line.me/v2/bot/message/push', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`
-    },
-    body: JSON.stringify(message)
-  });
-
-  const result = await res.json();
-  console.log('LINE API 回應:', result);
-  return result;
+export async function GET() {
+  return Response.json({ error: 'Method Not Allowed' }, { status: 405 });
 }
