@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 // 初始化 Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
 // POST: 新增投票並推播到 LINE
@@ -39,7 +39,7 @@ export async function POST(req) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // 推播到 LINE
+    // 推播到 LINE（固定使用者 ID）
     await sendLinePush(data);
 
     return NextResponse.json({ success: true, vote: data }, { status: 200 });
@@ -52,7 +52,7 @@ export async function POST(req) {
 // 推播到 LINE Bot
 async function sendLinePush(vote) {
   const message = {
-    to: process.env.LINE_USER_ID, // 或群組 ID
+    to: 'U5dbd8b5fb153630885b656bb5f8ae011', // 固定推播到這個使用者 ID
     messages: [
       {
         type: 'flex',
