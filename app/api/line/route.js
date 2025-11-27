@@ -1,5 +1,7 @@
 import { Client } from '@line/bot-sdk';
 import { generateAnswer, getImageUrlsByKeyword } from '../../../lib/grokmain.js';
+import { spawnSync } from 'child_process';
+import path from 'path';
 import 'dotenv/config';
 
 export const runtime = 'nodejs';
@@ -93,7 +95,7 @@ export async function POST(req) {
           continue;
         }
 
-        // 2️⃣ 圖片關鍵字 → 目前回覆暫時文字提示 (可改成 Supabase 查詢)
+        // 2️⃣ 圖片關鍵字 → 暫時回覆文字
         if (IMAGE_KEYWORDS.some(kw => userText.includes(kw))) {
           await client.replyMessage(replyToken, { type: 'text', text: '目前圖片查詢功能尚未啟用。' });
           continue;
@@ -101,6 +103,17 @@ export async function POST(req) {
 
         // 3️⃣ 其他 → 呼叫 Groq LLM
         try {
+          // ⚡ 如果你有 embedding.py 需要用 Node.js 呼叫 python3
+          const embeddingScript = path.join(process.cwd(), 'lib', 'embedding.py');
+          const embedResult = spawnSync('python3', [embeddingScript, userText], { encoding: 'utf-8' });
+
+          if (embedResult.error) {
+            console.error('執行 Python embedding 失敗:', embedResult.error);
+          } else {
+            console.log('Python embedding 輸出:', embedResult.stdout);
+          }
+
+          // 然後再呼叫 generateAnswer 保留 Groq API
           const answer = await generateAnswer(userText);
           const replyMessage = answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
           await client.replyMessage(replyToken, { type: 'text', text: replyMessage });
