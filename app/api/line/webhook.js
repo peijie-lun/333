@@ -21,49 +21,57 @@ export async function POST(req) {
     const { events } = await req.json();
 
     for (const event of events) {
-      if (event.source.type !== 'user') continue; // 只處理 user 來源
+      console.log('Received event:', JSON.stringify(event, null, 2));
+
+      if (event.source.type !== 'user') continue; // 只處理 user
 
       const userId = event.source.userId;
-      const profile = await client.getProfile(userId);
 
-      // --- 查資料庫是否已存在 ---
-      const { data: existing } = await supabase
-        .from('line_users')
-        .select('line_user_id')
-        .eq('line_user_id', userId)
-        .limit(1)
-        .single();
-
-      if (!existing) {
-        // --- 不存在就新增 ---
-        await supabase.from('line_users').insert([{
-          line_user_id: userId,
-          display_name: profile.displayName,
-          avatar_url: profile.pictureUrl || '',
-          status_message: profile.statusMessage || ''
-        }]);
-      } else {
-        // --- 已存在就更新資料 ---
-        await supabase.from('line_users').update({
-          display_name: profile.displayName,
-          avatar_url: profile.pictureUrl || '',
-          status_message: profile.statusMessage || '',
-          updated_at: new Date().toISOString()
-        }).eq('line_user_id', userId);
+      // --- 取得 LINE 使用者資料 ---
+      let profile;
+      try {
+        profile = await client.getProfile(userId);
+        console.log('Profile:', profile);
+      } catch (err) {
+        console.error('LINE getProfile 失敗:', err);
+        continue; // 無法抓到 profile 就跳過
       }
 
-      // --- follow 事件才回覆歡迎訊息 ---
+      // --- upsert 到 Supabase ---
+      const { data, error } = await supabase.from('line_users').upsert([{
+        line_user_id: userId,
+        display_name: profile.displayName,
+        avatar_url: profile.pictureUrl || '',
+        status_message: profile.statusMessage || '',
+        updated_at: new Date().toISOString()
+      }], { onConflict: 'line_user_id' });
+
+      console.log('Supabase upsert data:', data, 'error:', error);
+
+      // --- follow 事件回覆歡迎訊息 ---
       if (event.type === 'follow') {
-        await client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: `歡迎加入 ${profile.displayName}！`
-        });
+        try {
+          await client.replyMessage(event.replyToken, {
+            type: 'text',
+            text: `歡迎加入 ${profile.displayName}！`
+          });
+        } catch (err) {
+          console.error('LINE replyMessage 失敗:', err);
+        }
+      }
+
+      // --- 可在這裡處理其他互動事件 ---
+      if (event.type === 'message') {
+        console.log(`使用者 ${profile.displayName} 發送訊息:`, event.message);
+      }
+      if (event.type === 'postback') {
+        console.log(`使用者 ${profile.displayName} 按下按鈕:`, event.postback);
       }
     }
 
     return Response.json({ success: true });
   } catch (err) {
-    console.error('LINE webhook 錯誤:', err);
+    console.error('LINE webhook POST 錯誤:', err);
     return Response.json({ error: err.message }, { status: 500 });
   }
 }
