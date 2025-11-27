@@ -1,7 +1,14 @@
-
 import { createClient } from '@supabase/supabase-js';
+import { Client } from '@line/bot-sdk';
 
 export const runtime = 'nodejs';
+
+// --- LINE Bot ---
+const lineConfig = {
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
+};
+const client = new Client(lineConfig);
 
 // --- Supabase ---
 const supabase = createClient(
@@ -14,7 +21,7 @@ export async function POST(req) {
     const body = await req.json();
     const { title, description, author, ends_at, options, test } = body;
 
-    // 防呆：必填欄位
+    // --- 必填檢查 ---
     if (!title || !author || !ends_at) {
       return Response.json(
         { error: 'title, author, ends_at 為必填' },
@@ -26,57 +33,82 @@ export async function POST(req) {
 
     // --- 測試模式 ---
     if (test === true) {
-      return Response.json({ message: '投票測試成功' });
+      return Response.json({ message: '投票測試成功，未推播' });
     }
 
-    // --- 1. 儲存到 Supabase ---
-    const { error } = await supabase
-      .from('votes')
-      .insert([
-        {
-          title,
-          description,
-          ends_at,
-          author,
-          options: options || ['同意', '反對', '棄權'],
-          created_at: new Date().toISOString()
-        }
-      ]);
+    // --- 1. 儲存至 Supabase ---
+    const { error } = await supabase.from('votes').insert([
+      {
+        title,
+        description,
+        ends_at,
+        author,
+        options: options || ['同意', '反對', '棄權'],
+        created_at: new Date().toISOString()
+      }
+    ]);
 
     if (error) {
       console.error('Supabase 插入錯誤:', error);
       return Response.json({ error }, { status: 500 });
     }
 
-    // --- 2. 推播到 LINE ---
-    const lineUserId = 'U5dbd8b5fb153630885b656bb5f8ae011'; // 固定推播到這個 ID
-
-    const pushBody = {
-      to: lineUserId,
-      messages: [
-        {
-          type: 'text',
-          text: `📢 新的投票\n標題：${title}\n說明：${description || '無'}\n截止時間：${ends_at}\n發布者：${author}\n時間：${time}`
-        }
-      ]
+    // --- 2. Flex Message（也可以用 text message） ---
+    const flexMessage = {
+      type: 'flex',
+      altText: '📢 新投票通知',
+      contents: {
+        type: 'bubble',
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          spacing: 'md',
+          contents: [
+            {
+              type: 'text',
+              text: '📢 新的投票',
+              weight: 'bold',
+              size: 'lg',
+            },
+            { type: 'separator', margin: 'md' },
+            {
+              type: 'text',
+              text: `📌 標題：${title}`,
+              wrap: true,
+              weight: 'bold',
+            },
+            {
+              type: 'text',
+              text: `📝 說明：${description || '無'}`,
+              wrap: true,
+            },
+            {
+              type: 'text',
+              text: `⏰ 截止時間：${ends_at}`,
+              color: '#aaaaaa',
+              size: 'sm',
+            },
+            {
+              type: 'text',
+              text: `👤 發布者：${author}`,
+              color: '#aaaaaa',
+              size: 'sm',
+            },
+            {
+              type: 'text',
+              text: `🕒 時間：${time}`,
+              color: '#aaaaaa',
+              size: 'sm',
+            },
+          ],
+        },
+      },
     };
 
-    const lineRes = await fetch('https://api.line.me/v2/bot/message/push', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`
-      },
-      body: JSON.stringify(pushBody)
-    });
+    // --- 3. 推播給所有 LINE 好友 ---
+    await client.broadcast(flexMessage);
 
-    if (!lineRes.ok) {
-      const errText = await lineRes.text();
-      console.error('LINE 推播失敗:', errText);
-      return Response.json({ error: errText }, { status: 500 });
-    }
-
-    // --- 最終成功回應 ---
+    // --- 成功回應 ---
     return Response.json({ success: true });
 
   } catch (err) {
