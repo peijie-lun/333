@@ -45,7 +45,9 @@ export async function POST(req) {
           amount,
           due,
           invoice: invoice || '',
-          time,
+            created_at: time
+        
+            
         }
       ]);
 
