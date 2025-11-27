@@ -21,7 +21,7 @@ export async function POST(req) {
     const body = await req.json();
     const { title, content, author, test } = body;
 
-    // 防呆：必填欄位
+    // --- 必填檢查 ---
     if (!title || !content || !author) {
       return Response.json(
         { error: 'title, content, author 為必填' },
@@ -33,10 +33,10 @@ export async function POST(req) {
 
     // --- 測試模式 ---
     if (test === true) {
-      return Response.json({ message: '測試成功' });
+      return Response.json({ message: '測試成功，未推播' });
     }
 
-    // --- 1. 儲存到 Supabase ---
+    // --- 1. 儲存至 Supabase ---
     const { error } = await supabase
       .from('announcements')
       .insert([{ title, content, time, author, reads: 0 }]);
@@ -46,35 +46,56 @@ export async function POST(req) {
       return Response.json({ error }, { status: 500 });
     }
 
-    // --- 2. 推播到 LINE ---
-    const lineUserId = 'U5dbd8b5fb153630885b656bb5f8ae011'; // 之後可改成動態
-
-    const pushBody = {
-      to: lineUserId,
-      messages: [
-        {
-          type: 'text',
-          text: `📢 最新公告\n${title}\n${content}\n發布者：${author}\n時間：${time}`,
+    // --- 2. Flex Message 結構 ---
+    const flexMessage = {
+      type: 'flex',
+      altText: '📢 最新公告',
+      contents: {
+        type: 'bubble',
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          spacing: 'md',
+          contents: [
+            {
+              type: 'text',
+              text: '📢 最新公告',
+              weight: 'bold',
+              size: 'lg',
+            },
+            { type: 'separator', margin: 'md' },
+            {
+              type: 'text',
+              text: `📌 標題：${title}`,
+              wrap: true,
+              weight: 'bold',
+            },
+            {
+              type: 'text',
+              text: `📝 內容：${content}`,
+              wrap: true,
+            },
+            {
+              type: 'text',
+              text: `👤 發布者：${author}`,
+              color: '#aaaaaa',
+              size: 'sm',
+            },
+            {
+              type: 'text',
+              text: `⏰ 時間：${time}`,
+              color: '#aaaaaa',
+              size: 'sm',
+            },
+          ],
         },
-      ],
+      },
     };
 
-    const lineRes = await fetch('https://api.line.me/v2/bot/message/push', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
-      },
-      body: JSON.stringify(pushBody),
-    });
+    // --- 3. 推播給所有好友（Broadcast） ---
+    await client.broadcast(flexMessage);
 
-    if (!lineRes.ok) {
-      const errText = await lineRes.text();
-      console.error('LINE 推播失敗:', errText);
-      return Response.json({ error: errText }, { status: 500 });
-    }
-
-    // --- 最終成功回應 ---
+    // --- 成功 ---
     return Response.json({ success: true });
 
   } catch (err) {
