@@ -49,7 +49,7 @@ export async function POST(req) {
     // 2. 固定推播 LINE User ID
     const lineUserId = 'U5dbd8b5fb153630885b656bb5f8ae011'; // 測試用
 
-    // 3. 推播訊息（Flex Message）
+    // 3. Flex Message
     const flexMessage = {
       type: 'flex',
       altText: '📦 包裹通知',
