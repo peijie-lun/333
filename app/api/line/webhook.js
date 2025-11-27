@@ -21,33 +21,47 @@ export async function POST(req) {
     const { events } = await req.json();
 
     for (const event of events) {
-      // --- 只處理 follow 與 message 事件 ---
-      if (event.type === 'follow' || event.type === 'message') {
-        const userId = event.source.userId;
+      if (event.source.type !== 'user') continue; // 只處理 user 來源
 
-        // 取得 LINE 使用者資料
-        const profile = await client.getProfile(userId);
+      const userId = event.source.userId;
+      const profile = await client.getProfile(userId);
 
-        // --- upsert 到 Supabase ---
-        await supabase.from('line_users').upsert([{
+      // --- 查資料庫是否已存在 ---
+      const { data: existing } = await supabase
+        .from('line_users')
+        .select('line_user_id')
+        .eq('line_user_id', userId)
+        .limit(1)
+        .single();
+
+      if (!existing) {
+        // --- 不存在就新增 ---
+        await supabase.from('line_users').insert([{
           line_user_id: userId,
           display_name: profile.displayName,
           avatar_url: profile.pictureUrl || '',
           status_message: profile.statusMessage || ''
-        }], { onConflict: 'line_user_id' });
+        }]);
+      } else {
+        // --- 已存在就更新資料 ---
+        await supabase.from('line_users').update({
+          display_name: profile.displayName,
+          avatar_url: profile.pictureUrl || '',
+          status_message: profile.statusMessage || '',
+          updated_at: new Date().toISOString()
+        }).eq('line_user_id', userId);
+      }
 
-        // --- 只在 follow 時回覆歡迎訊息 ---
-        if (event.type === 'follow') {
-          await client.replyMessage(event.replyToken, {
-            type: 'text',
-            text: `歡迎加入 ${profile.displayName}！`
-          });
-        }
+      // --- follow 事件才回覆歡迎訊息 ---
+      if (event.type === 'follow') {
+        await client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: `歡迎加入 ${profile.displayName}！`
+        });
       }
     }
 
     return Response.json({ success: true });
-
   } catch (err) {
     console.error('LINE webhook 錯誤:', err);
     return Response.json({ error: err.message }, { status: 500 });
