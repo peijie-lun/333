@@ -1,6 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
+import { Client } from '@line/bot-sdk';
 
 export const runtime = 'nodejs';
+
+// --- LINE Bot ---
+const lineConfig = {
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
+};
+const client = new Client(lineConfig);
 
 // --- Supabase ---
 const supabase = createClient(
@@ -20,7 +28,7 @@ export async function POST(req) {
       test
     } = body;
 
-    // --- 防呆 ---
+    // --- 必填檢查 ---
     if (!courier || !recipient_name || !recipient_room || !arrived_at) {
       return Response.json(
         { error: 'courier, recipient_name, recipient_room, arrived_at 為必填' },
@@ -35,72 +43,97 @@ export async function POST(req) {
       return Response.json({ message: '測試成功' });
     }
 
-    // --- 1. 儲存到 Supabase ---
-    const { error } = await supabase
-      .from('packages')
-      .insert([
-        {
-          courier,
-          recipient_name,
-          recipient_room,
-          tracking_number: tracking_number || '',
-          arrived_at,
-          status: 'pending'
-        }
-      ]);
+    // --- 1. 儲存資料到 Supabase ---
+    const { error } = await supabase.from('packages').insert([
+      {
+        courier,
+        recipient_name,
+        recipient_room,
+        tracking_number: tracking_number || '',
+        arrived_at,
+        status: 'pending',
+      },
+    ]);
 
     if (error) {
       console.error('Supabase 插入錯誤:', error);
       return Response.json({ error }, { status: 500 });
     }
 
-    // --- 2. LINE 推播 (使用 fetch) ---
-    const lineUserId = 'U5dbd8b5fb153630885b656bb5f8ae011'; // 之後可改成動態
+    // --- 2. 固定推播的 LINE User ID（可改成動態） ---
+    const lineUserId = 'U5dbd8b5fb153630885b656bb5f8ae011';
 
-    const flexMessage = {
-      type: 'flex',
-      altText: '📦 包裹通知',
-      contents: {
-        type: 'bubble',
-        body: {
-          layout: 'vertical',
-          contents: [
-            { type: 'text', text: '📦 包裹通知', weight: 'bold', size: 'lg', color: '#333' },
-            { type: 'separator', margin: 'md' },
-            { type: 'text', text: `收件人：${recipient_name}`, margin: 'md' },
-            { type: 'text', text: `房號：${recipient_room}`, margin: 'sm' },
-            { type: 'text', text: `快遞公司：${courier}`, margin: 'sm' },
-            { type: 'text', text: `追蹤號碼：${tracking_number || '無'}`, margin: 'sm' },
-            { type: 'text', text: `到達時間：${time}`, margin: 'sm' }
-          ]
-        }
-      }
-    };
-
+    // --- 3. Flex Message 正確格式 ---
     const pushBody = {
       to: lineUserId,
-      messages: [flexMessage]
+      messages: [
+        {
+          type: 'flex',
+          altText: '📦 包裹通知',
+          contents: {
+            type: 'bubble',
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '📦 包裹通知',
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#333',
+                },
+                { type: 'separator', margin: 'md' },
+                {
+                  type: 'text',
+                  text: `收件人：${recipient_name}`,
+                  margin: 'md',
+                },
+                {
+                  type: 'text',
+                  text: `房號：${recipient_room}`,
+                  margin: 'sm',
+                },
+                {
+                  type: 'text',
+                  text: `快遞公司：${courier}`,
+                  margin: 'sm',
+                },
+                {
+                  type: 'text',
+                  text: `追蹤號碼：${tracking_number || '無'}`,
+                  margin: 'sm',
+                },
+                {
+                  type: 'text',
+                  text: `到達時間：${time}`,
+                  margin: 'sm',
+                },
+              ],
+            },
+          },
+        },
+      ],
     };
 
-    const lineRes = await fetch(
-      'https://api.line.me/v2/bot/message/push',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`
-        },
-        body: JSON.stringify(pushBody)
-      }
-    );
+    // --- 4. 呼叫 LINE Push API ---
+    const lineRes = await fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
+      },
+      body: JSON.stringify(pushBody),
+    });
 
+    // 異常處理
     if (!lineRes.ok) {
       const errText = await lineRes.text();
       console.error('LINE 推播失敗:', errText);
       return Response.json({ error: errText }, { status: 500 });
     }
 
-    // --- 成功 ---
+    // --- 成功回應 ---
     return Response.json({ success: true });
 
   } catch (err) {
@@ -113,8 +146,5 @@ export async function POST(req) {
 }
 
 export async function GET() {
-  return Response.json(
-    { error: 'Method Not Allowed' },
-    { status: 405 }
-  );
+  return Response.json({ error: 'Method Not Allowed' }, { status: 405 });
 }
