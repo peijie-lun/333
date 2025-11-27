@@ -1,15 +1,7 @@
 
 import { createClient } from '@supabase/supabase-js';
-import { Client } from '@line/bot-sdk';
 
 export const runtime = 'nodejs';
-
-// --- LINE Bot ---
-const lineConfig = {
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.LINE_CHANNEL_SECRET,
-};
-const client = new Client(lineConfig);
 
 // --- Supabase ---
 const supabase = createClient(
@@ -57,7 +49,7 @@ export async function POST(req) {
     // --- 2. 固定 LINE User ID（測試用）
     const lineUserId = 'U5dbd8b5fb153630885b656bb5f8ae011'; // 請換成你的測試用 LINE User ID
 
-    // --- 3. 推播到 LINE ---
+    // --- 3. 正確 Flex Message 格式 ---
     const pushBody = {
       to: lineUserId,
       messages: [
@@ -69,7 +61,13 @@ export async function POST(req) {
             body: {
               layout: 'vertical',
               contents: [
-                { type: 'text', text: '📦 包裹通知', weight: 'bold', size: 'lg', color: '#333' },
+                {
+                  type: 'text',
+                  text: '📦 包裹通知',
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#333'
+                },
                 { type: 'separator', margin: 'md' },
                 { type: 'text', text: `收件人：${recipient_name}`, margin: 'md' },
                 { type: 'text', text: `房號：${recipient_room}`, margin: 'sm' },
@@ -83,6 +81,7 @@ export async function POST(req) {
       ]
     };
 
+    // --- 4. 呼叫 LINE 推播 API ---
     const lineRes = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
       headers: {
