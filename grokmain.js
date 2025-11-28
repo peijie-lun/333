@@ -1,7 +1,5 @@
 
-
 import dotenv from 'dotenv';
-import { spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import axios from 'axios';
@@ -9,11 +7,9 @@ import { fileURLToPath } from 'url';
 
 dotenv.config({ path: path.join(process.cwd(), '.env') });
 
-// 取得 __dirname（ESM 不支援）
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 自動同步
 const USE_AUTO_SYNC = process.env.USE_AUTO_SYNC === 'true';
 if (USE_AUTO_SYNC) {
   const { startAutoSync } = await import('./supabase_auto_sync.js');
@@ -22,13 +18,11 @@ if (USE_AUTO_SYNC) {
     .catch(err => console.error('❌ 自動同步啟動失敗:', err));
 }
 
-// 快取檔
 const cachePath = path.join(__dirname, 'supabase_embeddings.json');
-
-// 若沒有快取 → 執行 supabase_fetch.js
 if (!fs.existsSync(cachePath)) {
   console.log('⚠️ 快取不存在,執行初始載入...');
   const supabasePath = path.join(__dirname, 'supabase_fetch.js');
+  const { spawnSync } = await import('child_process');
   const supabaseResult = spawnSync('node', [supabasePath], { stdio: 'inherit' });
   if (supabaseResult.error || supabaseResult.status !== 0) {
     console.error('❌ 執行 supabase_fetch.js 失敗');
@@ -37,37 +31,32 @@ if (!fs.existsSync(cachePath)) {
   console.log('✅ 使用現有快取');
 }
 
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL;
 
 // -------------------------------
-// Embedding function
+// Embedding function (OpenAI API)
 // -------------------------------
 async function getEmbedding(text) {
   try {
-    const py = spawnSync('python', [path.join(__dirname, 'embedding.py'), text], {
-      encoding: 'utf-8'
-    });
-
-    if (py.error) {
-      console.error('執行 Python 失敗:', py.error);
-      return null;
-    }
-
-    if (py.status !== 0) {
-      console.error('Python embedding.py 執行錯誤:', py.stderr);
-      return null;
-    }
-
-    try {
-      const embedding = JSON.parse(py.stdout);
-      return embedding;
-    } catch (e) {
-      console.error('embedding.py 回傳格式解析失敗:', py.stdout);
-      return null;
-    }
+    const response = await axios.post(
+      'https://api.openai.com/v1/embeddings',
+      {
+        model: 'text-embedding-3-small', // 或 text-embedding-3-large
+        input: text
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    return response.data.data[0].embedding;
   } catch (error) {
-    console.error('Error getting embedding:', error);
+    console.error('取得 Embedding 失敗:', error.response?.data || error.message);
+    return null;
   }
 }
 
@@ -81,7 +70,6 @@ async function generateAnswer(query) {
     return;
   }
 
-  // 讀 supabase 快取
   if (!fs.existsSync(cachePath)) {
     console.error('找不到 supabase_embeddings.json，請先執行 supabase_fetch.js');
     return;
@@ -101,7 +89,6 @@ async function generateAnswer(query) {
     return;
   }
 
-  // cosine similarity
   function cosineSimilarity(a, b) {
     const dot = a.reduce((sum, v, i) => sum + v * b[i], 0);
     const normA = Math.sqrt(a.reduce((sum, v) => sum + v * v, 0));
@@ -109,7 +96,6 @@ async function generateAnswer(query) {
     return dot / (normA * normB);
   }
 
-  // Top 3
   const scored = contextChunks.map(chunk => ({
     chunk,
     sim: cosineSimilarity(queryEmbedding, chunk.embedding)
@@ -128,34 +114,24 @@ async function generateAnswer(query) {
   let mostRelevantChunk = top3[0].chunk;
   let maxSim = top3[0].sim;
 
-  // fallback: 關鍵字 N-gram
   if (maxSim < 0.9) {
     const words = query.match(/[\u4e00-\u9fa5]|\w+/g) || [];
     const keywordSet = new Set();
-
     for (let n = 1; n <= 3; n++) {
       for (let i = 0; i <= words.length - n; i++) {
         keywordSet.add(words.slice(i, i + n).join(''));
       }
     }
-
-    console.log('[fallback debug] 關鍵字：', Array.from(keywordSet));
-
     const fallbackChunks = contextChunks.filter(chunk =>
       Array.from(keywordSet).some(kw => chunk.content.includes(kw))
     );
-
     if (fallbackChunks.length > 0) {
-      console.log('--- fallback 關鍵字命中 ---');
       mostRelevantChunk = {
         content: fallbackChunks.map(c => c.content).join('\n---\n')
       };
     }
   }
 
-  // --------------------------------------
-  // Groq RAG Query
-  // --------------------------------------
   try {
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -165,7 +141,7 @@ async function generateAnswer(query) {
           {
             role: "system",
             content:
-              "你是檢索增強型助理，回答一律使用繁體中文，只能根據參考資料回答，不可補充或推測任何未在參考資料中的內容。即使相關度低，也請根據參考資料盡量回答。"
+              "你是檢索增強型助理，回答一律使用繁體中文，只能根據參考資料回答，不可補充或推測任何未在參考資料中的內容。"
           },
           {
             role: "user",
@@ -180,27 +156,20 @@ async function generateAnswer(query) {
       }
     );
 
-    if (
-      response.data &&
-      response.data.choices &&
-      response.data.choices[0]?.message?.content
-    ) {
+    if (response.data?.choices?.[0]?.message?.content) {
       console.log('Answer:', response.data.choices[0].message.content);
       return response.data.choices[0].message.content;
     } else {
       console.error('Groq API 回傳格式異常:', response.data);
     }
   } catch (error) {
-    if (error.response) console.error('Groq API 錯誤:', error.response.data);
-    else console.error('Groq API 請求失敗:', error.message);
+    console.error('Groq API 錯誤:', error.response?.data || error.message);
   }
 }
 
 // ✅ 雙模式匯出
 export { generateAnswer };
 export default generateAnswer;
-
-// CommonJS 支援
 if (typeof module !== 'undefined') {
   module.exports = { generateAnswer };
 }
