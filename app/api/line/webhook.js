@@ -21,46 +21,75 @@ export async function POST(req) {
     for (const event of events) {
       const userId = event.source.userId;
 
-      // FOLLOW 事件：提醒使用者傳任何訊息
+      // 嘗試抓 LINE Profile
+      let profile = { displayName: '', pictureUrl: '', statusMessage: '' };
+      try {
+        profile = await client.getProfile(userId);
+      } catch (err) {
+        console.warn('⚠️ 無法抓到 profile，只存 userId。', err);
+      }
+
+      // 檢查使用者是否已綁定
+      const { data: existingUser, error: checkError } = await supabase
+        .from('line_users')
+        .select('*')
+        .eq('line_user_id', userId)
+        .single();
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error('❌ Supabase 檢查錯誤:', checkError);
+      }
+
+      const isAlreadyBound = existingUser !== null;
+
+      // FOLLOW 事件 → 只存資料
       if (event.type === 'follow') {
-        await client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: `歡迎加入！🙌\n請傳任意訊息以完成綁定。`
-        });
+        if (!isAlreadyBound) {
+          const { error } = await supabase.from('line_users').upsert(
+            [
+              {
+                line_user_id: userId,
+                display_name: profile.displayName || '',
+                avatar_url: profile.pictureUrl || '',
+                status_message: profile.statusMessage || '',
+              },
+            ],
+            { onConflict: 'line_user_id' }
+          );
+          if (error) console.error('❌ Supabase 寫入錯誤:', error);
+        }
         continue;
       }
 
-      // MESSAGE 事件：使用者傳訊息 → 觸發綁定流程
+      // MESSAGE 事件 → 綁定或已綁定提醒
       if (event.type === 'message') {
-        // 讀取 LINE 用戶資料
-        let profile = { displayName: '', pictureUrl: '', statusMessage: '' };
-        try {
-          profile = await client.getProfile(userId);
-        } catch (err) {
-          console.warn('⚠️ 無法抓到 profile，只存 userId。', err);
+        if (!isAlreadyBound) {
+          // 尚未綁定 → 寫入資料庫
+          const { error } = await supabase.from('line_users').upsert(
+            [
+              {
+                line_user_id: userId,
+                display_name: profile.displayName || '',
+                avatar_url: profile.pictureUrl || '',
+                status_message: profile.statusMessage || '',
+              },
+            ],
+            { onConflict: 'line_user_id' }
+          );
+          if (error) console.error('❌ Supabase 寫入錯誤:', error);
+
+          // 回覆綁定成功
+          await client.replyMessage(event.replyToken, {
+            type: 'text',
+            text: `綁定完成！🎉\n歡迎你，${profile.displayName || '使用者'}！`
+          });
+        } else {
+          // 已綁定 → 簡單提醒
+          await client.replyMessage(event.replyToken, {
+            type: 'text',
+            text: `你已經完成綁定囉，${profile.displayName || '使用者'} 😊`
+          });
         }
-
-        // 寫入 Supabase
-        const { error } = await supabase.from('line_users').upsert(
-          [
-            {
-              line_user_id: userId,
-              display_name: profile.displayName || '',
-              avatar_url: profile.pictureUrl || '',
-              status_message: profile.statusMessage || '',
-            },
-          ],
-          { onConflict: 'line_user_id' }
-        );
-
-        if (error) console.error('❌ Supabase 寫入錯誤:', error);
-
-        // 回覆綁定成功訊息
-        await client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: `綁定完成！🎉\n歡迎你，${profile.displayName || '使用者'}！`
-        });
-
         continue;
       }
     }
