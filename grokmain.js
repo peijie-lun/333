@@ -1,4 +1,5 @@
 
+
 import dotenv from 'dotenv';
 import { spawnSync } from 'child_process';
 import path from 'path';
@@ -185,6 +186,7 @@ async function generateAnswer(query) {
       response.data.choices[0]?.message?.content
     ) {
       console.log('Answer:', response.data.choices[0].message.content);
+      return response.data.choices[0].message.content;
     } else {
       console.error('Groq API 回傳格式異常:', response.data);
     }
@@ -192,4 +194,13 @@ async function generateAnswer(query) {
     if (error.response) console.error('Groq API 錯誤:', error.response.data);
     else console.error('Groq API 請求失敗:', error.message);
   }
+}
+
+// ✅ 雙模式匯出
+export { generateAnswer };
+export default generateAnswer;
+
+// CommonJS 支援
+if (typeof module !== 'undefined') {
+  module.exports = { generateAnswer };
 }
