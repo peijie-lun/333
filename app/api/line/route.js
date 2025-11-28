@@ -1,5 +1,5 @@
 import { Client } from '@line/bot-sdk';
-import { generateAnswer, getImageUrlsByKeyword } from '../../../lib/grokmain.js';
+import { generateAnswer, getImageUrlsByKeyword } from '../../../grokmain.js';
 import 'dotenv/config';
 
 export const runtime = 'nodejs';
