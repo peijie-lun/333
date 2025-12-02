@@ -47,20 +47,23 @@ export async function POST(req) {
       const user_id = userProfile.line_user_id;
       const user_name = userProfile.display_name;
 
-      // 寫入 vote_records
-      const { error: recordError } = await supabase.from('vote_records').insert([
-        {
-          vote_id,
-          user_id,
-          user_name,
-          option_selected,
-          voted_at: new Date().toISOString(),
-        },
-      ]);
+      // 寫入 vote_records，並加強 debug log
+      const voteRecord = {
+        vote_id,
+        user_id,
+        user_name,
+        option_selected,
+        voted_at: new Date().toISOString(),
+      };
+      const { error: recordError } = await supabase.from('vote_records').insert([voteRecord]);
       if (recordError) {
-        return Response.json({ error: '投票失敗，請稍後再試。' }, { status: 500 });
+        console.error('投票寫入失敗:', recordError, '資料:', voteRecord);
+        return Response.json({ error: '投票失敗，請稍後再試。', details: recordError }, { status: 500 });
       }
-      return Response.json({ success: true, message: `投票成功！您選擇了「${option_selected}」` });
+      console.log('投票成功寫入 vote_records:', voteRecord);
+      // 美化自動回覆內容
+      const replyText = `✅ 投票成功！\n您已選擇「${option_selected}」\n感謝您的參與。`;
+      return Response.json({ success: true, message: replyText });
     }
 
     // --- 原本管理者發布投票推播功能 ---
