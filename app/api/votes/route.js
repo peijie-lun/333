@@ -20,15 +20,19 @@ export async function POST(req) {
   try {
     const body = await req.json();
 
-    // --- 住戶投票訊息格式：vote:{vote_id}:{option} ---
-    if (body.vote_message && typeof body.vote_message === 'string' && body.vote_message.startsWith('vote:')) {
-      // 解析 vote_id 與 option
-      const match = body.vote_message.match(/^vote:([\w-]+):(.+)$/);
-      if (!match) {
-        return Response.json({ error: '投票格式錯誤，請重新操作。' }, { status: 400 });
+    // --- 住戶投票訊息格式：只回選項文字 ---
+    if (body.vote_message && typeof body.vote_message === 'string') {
+      // 取得最新一筆投票（假設同時只會有一個進行中的投票）
+      const { data: latestVote, error: voteError } = await supabase
+        .from('votes')
+        .select('id, ends_at')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (voteError || !latestVote || !latestVote[0]) {
+        return Response.json({ error: '找不到進行中的投票。' }, { status: 400 });
       }
-      const vote_id = match[1];
-      const option_selected = match[2];
+      const vote_id = latestVote[0].id;
+      const option_selected = body.vote_message.trim();
       const line_user_id = body.line_user_id;
 
       // 查詢 user profile
@@ -40,15 +44,11 @@ export async function POST(req) {
       if (userError || !userProfile) {
         return Response.json({ error: '找不到住戶資料，請聯絡管理員。' }, { status: 400 });
       }
-      // TODO: 取得 user_id（UUID），這裡假設 line_users 有 user_id 欄位
-      // const user_id = userProfile.user_id;
-      // 若無 user_id，請根據 line_user_id 去 profiles 表查 user_id
-      // 這裡暫用 line_user_id 當 user_id（請依實際結構調整）
       const user_id = userProfile.line_user_id;
       const user_name = userProfile.display_name;
 
       // 寫入 vote_records
-      const { error: voteError } = await supabase.from('vote_records').insert([
+      const { error: recordError } = await supabase.from('vote_records').insert([
         {
           vote_id,
           user_id,
@@ -57,7 +57,7 @@ export async function POST(req) {
           voted_at: new Date().toISOString(),
         },
       ]);
-      if (voteError) {
+      if (recordError) {
         return Response.json({ error: '投票失敗，請稍後再試。' }, { status: 500 });
       }
       return Response.json({ success: true, message: `投票成功！您選擇了「${option_selected}」` });
@@ -103,7 +103,7 @@ export async function POST(req) {
     const vote_id = voteInsert[0].id;
     const voteOptions = options || ['同意', '反對', '棄權'];
 
-    // --- 2. Flex Message + Quick Reply 投票按鈕 ---
+    // --- 2. Flex Message + Quick Reply 投票按鈕（只顯示選項文字） ---
     const flexMessage = {
       type: 'flex',
       altText: '📢 新投票通知',
@@ -159,7 +159,7 @@ export async function POST(req) {
           action: {
             type: 'message',
             label: opt,
-            text: `vote:${vote_id}:${opt}`
+            text: opt
           }
         }))
       }
