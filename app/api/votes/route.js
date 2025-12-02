@@ -19,11 +19,13 @@ const supabase = createClient(
 export async function POST(req) {
   try {
     const body = await req.json();
+    console.log('📥 收到 POST 請求:', JSON.stringify(body, null, 2));
 
     // -----------------------------
     // ✅ 使用者投票處理
     // -----------------------------
     if (body.vote_message && typeof body.vote_message === 'string') {
+      console.log('🗳️ 進入投票處理流程');
       const line_user_id = body.line_user_id;
       const replyToken = body.replyToken;
 
@@ -103,10 +105,11 @@ export async function POST(req) {
         voted_at: new Date().toISOString(),
       };
 
+      console.log('💾 準備寫入 vote_records:', voteRecord);
       const { error: recordError } = await supabase.from('vote_records').insert([voteRecord]);
 
       if (recordError) {
-        console.error('投票寫入失敗:', recordError.message, '資料:', voteRecord);
+        console.error('❌ 投票寫入失敗:', recordError.message, recordError);
         return Response.json({ error: '投票失敗', details: recordError.message }, { status: 500 });
       }
 
