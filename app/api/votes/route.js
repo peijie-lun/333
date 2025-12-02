@@ -44,8 +44,8 @@ export async function POST(req) {
       if (userError || !userProfile) {
         return Response.json({ error: '找不到住戶資料，請聯絡管理員。' }, { status: 400 });
       }
-      const user_id = userProfile.id; // vote_records.user_id 應為 line_users.id
-      const user_name = userProfile.display_name;
+      const user_id = userProfile.line_user_id; // vote_records.user_id 寫入 line_users.line_user_id
+      const user_name = userProfile.display_name; // vote_records.user_name 寫入 line_users.display_name
 
       // 寫入 vote_records，並加強 debug log
       const voteRecord = {
@@ -114,68 +114,68 @@ export async function POST(req) {
     const vote_id = voteInsert[0].id;
     const voteOptions = options || ['同意', '反對', '棄權'];
 
-    // --- 2. Flex Message + Quick Reply 投票按鈕（只顯示選項文字） ---
-      const flexMessage = {
-        type: 'flex',
-        altText: '📢 新投票通知',
-        contents: {
-          type: 'bubble',
-          body: {
-            type: 'box',
-            layout: 'vertical',
-            spacing: 'md',
-            contents: [
-              {
-                type: 'text',
-                text: '📢 新的投票',
-                weight: 'bold',
-                size: 'lg',
-              },
-              { type: 'separator', margin: 'md' },
-              {
-                type: 'text',
-                text: `📌 標題：${title}`,
-                wrap: true,
-                weight: 'bold',
-              },
-              {
-                type: 'text',
-                text: `📝 說明：${description || '無'}`,
-                wrap: true,
-              },
-              {
-                type: 'text',
-                text: `⏰ 截止時間：${ends_at}`,
-                color: '#aaaaaa',
-                size: 'sm',
-              },
-              {
-                type: 'text',
-                text: `👤 發布者：${author}`,
-                color: '#aaaaaa',
-                size: 'sm',
-              },
-              {
-                type: 'text',
-                text: `🕒 時間：${time}`,
-                color: '#aaaaaa',
-                size: 'sm',
-              },
-            ],
-          },
+    // --- 2. Flex Message + Quick Reply 投票按鈕（vote:{vote_id}:{option} 格式） ---
+    const flexMessage = {
+      type: 'flex',
+      altText: '📢 新投票通知',
+      contents: {
+        type: 'bubble',
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          spacing: 'md',
+          contents: [
+            {
+              type: 'text',
+              text: '📢 新的投票',
+              weight: 'bold',
+              size: 'lg',
+            },
+            { type: 'separator', margin: 'md' },
+            {
+              type: 'text',
+              text: `📌 標題：${title}`,
+              wrap: true,
+              weight: 'bold',
+            },
+            {
+              type: 'text',
+              text: `📝 說明：${description || '無'}`,
+              wrap: true,
+            },
+            {
+              type: 'text',
+              text: `⏰ 截止時間：${ends_at}`,
+              color: '#aaaaaa',
+              size: 'sm',
+            },
+            {
+              type: 'text',
+              text: `👤 發布者：${author}`,
+              color: '#aaaaaa',
+              size: 'sm',
+            },
+            {
+              type: 'text',
+              text: `🕒 時間：${time}`,
+              color: '#aaaaaa',
+              size: 'sm',
+            },
+          ],
         },
-        // Quick Reply 投票按鈕
-        quickReply: {
-          items: voteOptions.map(opt => ({
-            type: 'action',
-            action: {
-              type: 'message',
-              label: opt,
-              text: opt
-            }
-          }))
-        }
-      };
+      },
+      // Quick Reply 投票按鈕 vote:{vote_id}:{option}
+      quickReply: {
+        items: voteOptions.map(opt => ({
+          type: 'action',
+          action: {
+            type: 'message',
+            label: opt,
+            text: `vote:${vote_id}:${opt}`
+          }
+        }))
+      }
+    };
 
     // --- 3. 推播給所有 LINE 好友 ---
     await client.broadcast(flexMessage);
