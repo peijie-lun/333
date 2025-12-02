@@ -101,34 +101,83 @@ export async function POST(req) {
 
         console.log('📩 使用者輸入:', userText);
 
-        // 0️⃣ 投票訊息 → 優先攔截，呼叫 /api/votes
+        // 0️⃣ 投票訊息 → 直接在 webhook 處理
         if (userText.includes('vote:')) {
-          console.log('🗳️ 偵測到投票訊息，轉發至 /api/votes');
+          console.log('🗳️ 偵測到投票訊息');
           try {
-            const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || process.env.VERCEL_URL 
-              ? `https://${process.env.VERCEL_URL}` 
-              : 'http://localhost:3000';
-            
-            const response = await fetch(`${baseUrl}/api/votes`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                vote_message: userText,
-                line_user_id: userId
-              })
-            });
-            
-            const result = await response.json();
-            console.log('✅ votes API 回應:', result);
-            
-            const replyText = result.message || result.error || '投票處理完成';
-            await client.replyMessage(replyToken, { type: 'text', text: replyText });
-            console.log('✅ 投票回覆成功');
+            const parts = userText.split(':');
+            if (parts.length < 3) {
+              await client.replyMessage(replyToken, { type: 'text', text: '投票訊息格式錯誤' });
+              continue;
+            }
+
+            const voteIdFromMsg = parts[1].trim();
+            const option_selected = parts[2].replace('🗳️', '').trim();
+
+            // 確認 vote存在
+            const { data: voteExists } = await supabase
+              .from('votes')
+              .select('id')
+              .eq('id', voteIdFromMsg)
+              .single();
+
+            if (!voteExists) {
+              await client.replyMessage(replyToken, { type: 'text', text: '投票已過期或不存在' });
+              continue;
+            }
+
+            const vote_id = voteExists.id;
+
+            // 查詢 profile_id
+            const { data: userProfile } = await supabase
+              .from('line_users')
+              .select('display_name, profile_id')
+              .eq('line_user_id', userId)
+              .single();
+
+            if (!userProfile || !userProfile.profile_id) {
+              await client.replyMessage(replyToken, { type: 'text', text: '找不到住戶資料' });
+              continue;
+            }
+
+            const user_id = userProfile.profile_id;
+            const user_name = userProfile.display_name;
+
+            // 防止重複投票
+            const { data: existingVote } = await supabase
+              .from('vote_records')
+              .select('id')
+              .eq('vote_id', vote_id)
+              .eq('user_id', user_id)
+              .maybeSingle();
+
+            if (existingVote) {
+              await client.replyMessage(replyToken, { type: 'text', text: '您已經投過票' });
+              continue;
+            }
+
+            // 寫入投票
+            const { error } = await supabase.from('vote_records').insert([{
+              vote_id,
+              user_id,
+              user_name,
+              option_selected,
+              voted_at: new Date().toISOString()
+            }]);
+
+            if (error) {
+              console.error('❌ 投票寫入失敗:', error);
+              await client.replyMessage(replyToken, { type: 'text', text: '投票失敗' });
+              continue;
+            }
+
+            console.log('✅ 投票成功');
+            await client.replyMessage(replyToken, { type: 'text', text: `確認，您的投票結果為「${option_selected}」` });
           } catch (err) {
             console.error('❌ 投票處理失敗:', err);
             await client.replyMessage(replyToken, { type: 'text', text: '投票失敗，請稍後再試' });
           }
-          continue; // 跳過後續處理
+          continue;
         }
 
         // 1️⃣ 公共設施 → 固定 Flex Message
