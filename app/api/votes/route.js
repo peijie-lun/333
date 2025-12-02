@@ -115,15 +115,8 @@ export async function POST(req) {
 
       console.log('✅ 投票成功:', voteRecord);
 
-      // 回覆 LINE 使用者
+      // 回覆 LINE 使用者（已在 webhook 端處理，這裡只回傳訊息）
       const replyText = `確認，您的投票結果為「${option_selected}」`;
-      if (replyToken) {
-        try {
-          await client.replyMessage(replyToken, [{ type: 'text', text: replyText }]);
-        } catch (e) {
-          console.error('replyMessage 失敗:', e);
-        }
-      }
 
       return Response.json({ success: true, message: replyText });
     }

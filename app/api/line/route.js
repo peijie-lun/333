@@ -101,6 +101,27 @@ export async function POST(req) {
 
         console.log('使用者輸入:', userText);
 
+        // 0️⃣ 投票訊息 → 呼叫 /api/votes 並直接回覆
+        if (userText.startsWith('vote:')) {
+          try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'https://your-domain.vercel.app'}/api/votes`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                vote_message: userText,
+                line_user_id: userId
+              })
+            });
+            const result = await response.json();
+            const replyText = result.message || result.error || '投票處理完成';
+            await client.replyMessage(replyToken, { type: 'text', text: replyText });
+          } catch (err) {
+            console.error('投票處理失敗:', err);
+            await client.replyMessage(replyToken, { type: 'text', text: '投票失敗，請稍後再試' });
+          }
+          continue;
+        }
+
         // 1️⃣ 公共設施 → 固定 Flex Message
         if (userText.includes('公共設施')) {
           const carouselMessage = {
