@@ -47,7 +47,7 @@ export default function AdminDashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: announceTitle, content: announceContent, author: announceAuthor })
       });
-      const data = await res.json();
+      const data = await res.json();           
       if (res.ok) {
         setAnnounceMessage('✅ 公告已發布並推播到 LINE Bot！');
         setAnnounceTitle(''); setAnnounceContent(''); setAnnounceAuthor('');
