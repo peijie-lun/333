@@ -35,17 +35,17 @@ export async function POST(req) {
       const option_selected = body.vote_message.trim();
       const line_user_id = body.line_user_id;
 
-      // 查詢 user profile，抓 line_users 表的 id 欄位
+      // 查詢 line_users，拿 profile_id
       const { data: userProfile, error: userError } = await supabase
         .from('line_users')
-        .select('id, line_user_id, display_name')
+        .select('id, line_user_id, display_name, profile_id') // 確保有 profile_id
         .eq('line_user_id', line_user_id)
         .single();
       if (userError || !userProfile) {
         return Response.json({ error: '找不到住戶資料，請聯絡管理員。' }, { status: 400 });
       }
-      const user_id = userProfile.line_user_id; // vote_records.user_id 寫入 line_users.line_user_id
-      const user_name = userProfile.display_name; // vote_records.user_name 寫入 line_users.display_name
+      const user_id = userProfile.profile_id; // 這才是 vote_records.user_id
+      const user_name = userProfile.display_name;
 
       // 寫入 vote_records，並加強 debug log
       const voteRecord = {
@@ -62,7 +62,7 @@ export async function POST(req) {
       }
       console.log('投票成功寫入 vote_records:', voteRecord);
       // 美化自動回覆內容
-      const replyText = `✅ 投票成功！\n您已選擇「${option_selected}」\n感謝您的參與。`;
+      const replyText = `確認，您的投票結果為「${option_selected}」嗎？`;
         // 直接用 LINE Bot replyMessage 主動回覆住戶
         if (body.replyToken) {
           try {
@@ -170,8 +170,8 @@ export async function POST(req) {
           type: 'action',
           action: {
             type: 'message',
-            label: opt,
-            text: `vote:${vote_id}:${opt}`
+            label: `🗳️ ${opt}`,
+            text: `vote:${vote_id}:${opt} 🗳️`
           }
         }))
       }
