@@ -31,107 +31,16 @@ if (!fs.existsSync(cachePath)) {
   console.log('✅ 使用現有快取');
 }
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL;
 
-// -------------------------------
-// Embedding function (OpenAI API)
-// -------------------------------
-async function getEmbedding(text) {
-  try {
-    const response = await axios.post(
-      'https://api.openai.com/v1/embeddings',
-      {
-        model: 'text-embedding-3-small', // 或 text-embedding-3-large
-        input: text
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    return response.data.data[0].embedding;
-  } catch (error) {
-    console.error('取得 Embedding 失敗:', error.response?.data || error.message);
-    return null;
-  }
-}
+
 
 // --------------------------------
-// Main Answer Function
+// Main Answer Function (Groq only)
 // --------------------------------
 async function generateAnswer(query) {
-  const queryEmbedding = await getEmbedding(query);
-  if (!queryEmbedding) {
-    console.error('查詢向量生成失敗');
-    return;
-  }
-
-  if (!fs.existsSync(cachePath)) {
-    console.error('找不到 supabase_embeddings.json，請先執行 supabase_fetch.js');
-    return;
-  }
-
-  let cache = {};
-  try {
-    cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-  } catch {
-    console.error('supabase_embeddings.json 解析失敗');
-    return;
-  }
-
-  const contextChunks = Object.values(cache);
-  if (contextChunks.length === 0) {
-    console.error('embedding 快取為空');
-    return;
-  }
-
-  function cosineSimilarity(a, b) {
-    const dot = a.reduce((sum, v, i) => sum + v * b[i], 0);
-    const normA = Math.sqrt(a.reduce((sum, v) => sum + v * v, 0));
-    const normB = Math.sqrt(b.reduce((sum, v) => sum + v * v, 0));
-    return dot / (normA * normB);
-  }
-
-  const scored = contextChunks.map(chunk => ({
-    chunk,
-    sim: cosineSimilarity(queryEmbedding, chunk.embedding)
-  }));
-
-  scored.sort((a, b) => b.sim - a.sim);
-  const top3 = scored.slice(0, 3);
-
-  console.log('--- 查詢相似度前3參考資料 ---');
-  top3.forEach((item, idx) => {
-    console.log(`#${idx + 1} 相似度:`, item.sim);
-    console.log(item.chunk.content);
-    console.log('-----------------------------');
-  });
-
-  let mostRelevantChunk = top3[0].chunk;
-  let maxSim = top3[0].sim;
-
-  if (maxSim < 0.9) {
-    const words = query.match(/[\u4e00-\u9fa5]|\w+/g) || [];
-    const keywordSet = new Set();
-    for (let n = 1; n <= 3; n++) {
-      for (let i = 0; i <= words.length - n; i++) {
-        keywordSet.add(words.slice(i, i + n).join(''));
-      }
-    }
-    const fallbackChunks = contextChunks.filter(chunk =>
-      Array.from(keywordSet).some(kw => chunk.content.includes(kw))
-    );
-    if (fallbackChunks.length > 0) {
-      mostRelevantChunk = {
-        content: fallbackChunks.map(c => c.content).join('\n---\n')
-      };
-    }
-  }
-
   try {
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -145,7 +54,7 @@ async function generateAnswer(query) {
           },
           {
             role: "user",
-            content: `問題：${query}\n\n參考資料：${mostRelevantChunk.content}`
+            content: `問題：${query}`
           }
         ]
       },
