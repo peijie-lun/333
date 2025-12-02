@@ -1,4 +1,9 @@
 import { Client } from '@line/bot-sdk';
+import { createClient } from '@supabase/supabase-js';
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 import { generateAnswer, getImageUrlsByKeyword } from '../../../grokmain.js';
 import 'dotenv/config';
 
@@ -26,6 +31,70 @@ export async function POST(req) {
     }
 
     for (const event of events) {
+      // 取得 userId
+      const userId = event.source?.userId;
+      // 嘗試抓 LINE Profile
+      let profile = { displayName: '', pictureUrl: '', statusMessage: '' };
+      try {
+        profile = await client.getProfile(userId);
+      } catch (err) {
+        console.warn('⚠️ 無法抓到 profile，只存 userId。', err);
+      }
+
+      // 檢查使用者是否已存在
+      const { data: existingUser, error: checkError } = await supabase
+        .from('line_users')
+        .select('*')
+        .eq('line_user_id', userId)
+        .single();
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error('❌ Supabase 檢查錯誤:', checkError);
+      }
+      const isAlreadyBound = existingUser !== null;
+
+      // follow 事件：新用戶
+      if (event.type === 'follow') {
+        if (!isAlreadyBound) {
+          const { error } = await supabase.from('line_users').upsert(
+            [
+              {
+                line_user_id: userId,
+                display_name: profile.displayName || '',
+                avatar_url: profile.pictureUrl || '',
+                status_message: profile.statusMessage || '',
+                updated_at: new Date().toISOString(),
+              },
+            ],
+            { onConflict: 'line_user_id' }
+          );
+          if (error) console.error('❌ Supabase 寫入錯誤:', error);
+        }
+        continue;
+      }
+
+      // message 事件：有 profile 變動才更新
+      if (event.type === 'message') {
+        const profileChanged =
+          !existingUser ||
+          existingUser.display_name !== (profile.displayName || '') ||
+          existingUser.avatar_url !== (profile.pictureUrl || '') ||
+          existingUser.status_message !== (profile.statusMessage || '');
+        if (profileChanged) {
+          const { error: upsertError } = await supabase.from('line_users').upsert(
+            [
+              {
+                line_user_id: userId,
+                display_name: profile.displayName || '',
+                avatar_url: profile.pictureUrl || '',
+                status_message: profile.statusMessage || '',
+                updated_at: new Date().toISOString(),
+              },
+            ],
+            { onConflict: 'line_user_id' }
+          );
+          if (upsertError) console.error('❌ Supabase 寫入錯誤:', upsertError);
+        }
+      }
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
