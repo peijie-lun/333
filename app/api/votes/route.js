@@ -31,9 +31,13 @@ export async function POST(req) {
       if (voteError || !latestVote || !latestVote[0]) {
         return Response.json({ error: '找不到進行中的投票。' }, { status: 400 });
       }
-      const vote_id = latestVote[0].id;
+      // 取得投票ID與用戶ID（profiles.id）
+      const vote_id = latestVote[0].id; // OK，這是 votes.id
       const option_selected = body.vote_message.trim();
       const line_user_id = body.line_user_id;
+
+      // 查詢 user profile，抓 profile_id
+      // ...（下方已有 userProfile 查詢與 user_id 指派）...
 
       // 查詢 line_users，拿 profile_id
       const { data: userProfile, error: userError } = await supabase
