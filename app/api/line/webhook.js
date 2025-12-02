@@ -16,6 +16,23 @@ const supabase = createClient(
 
 export async function POST(req) {
   try {
+    // 測試 Supabase 寫入
+    const testUserId = 'test_user_' + Math.floor(Math.random() * 100000);
+    const { error: testError } = await supabase.from('line_users').insert([
+      {
+        line_user_id: testUserId,
+        display_name: '測試用',
+        avatar_url: 'https://example.com/avatar.png',
+        status_message: '測試訊息',
+        updated_at: new Date().toISOString(),
+      },
+    ]);
+    if (testError) {
+      console.error('❌ Supabase 測試寫入失敗:', testError);
+    } else {
+      console.log('✅ Supabase 測試寫入成功，userId:', testUserId);
+    }
+
     const { events } = await req.json();
 
     for (const event of events) {
