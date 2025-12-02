@@ -57,12 +57,30 @@ export async function POST(req) {
         .eq('line_user_id', line_user_id)
         .single();
 
-      if (userError || !userProfile || !userProfile.profile_id) {
-        return Response.json({ error: '找不到住戶資料或 profile_id 為空' }, { status: 400 });
+      if (userError || !userProfile) {
+        console.error('查詢 line_users 失敗:', userError);
+        return Response.json({ error: '找不到住戶資料' }, { status: 400 });
+      }
+
+      if (!userProfile.profile_id) {
+        console.error('profile_id 為空:', line_user_id);
+        return Response.json({ error: 'profile_id 未設定，請聯絡管理員' }, { status: 400 });
       }
 
       const user_id = userProfile.profile_id;
       const user_name = userProfile.display_name;
+
+      // 確認 profile_id 在 profiles 表中存在
+      const { data: profileExists, error: profileError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', user_id)
+        .single();
+
+      if (profileError || !profileExists) {
+        console.error('profiles 表中找不到 user_id:', user_id, profileError);
+        return Response.json({ error: 'profile_id 無效，請聯絡管理員' }, { status: 400 });
+      }
 
       // 防止重複投票
       const { data: existingVote } = await supabase
