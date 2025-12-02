@@ -63,6 +63,14 @@ export async function POST(req) {
       console.log('投票成功寫入 vote_records:', voteRecord);
       // 美化自動回覆內容
       const replyText = `✅ 投票成功！\n您已選擇「${option_selected}」\n感謝您的參與。`;
+        // 直接用 LINE Bot replyMessage 主動回覆住戶
+        if (body.replyToken) {
+          try {
+            await client.replyMessage(body.replyToken, [{ type: 'text', text: replyText }]);
+          } catch (e) {
+            console.error('replyMessage 失敗:', e);
+          }
+        }
       return Response.json({ success: true, message: replyText });
     }
 
