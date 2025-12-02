@@ -18,18 +18,7 @@ if (USE_AUTO_SYNC) {
     .catch(err => console.error('❌ 自動同步啟動失敗:', err));
 }
 
-const cachePath = path.join(__dirname, 'supabase_embeddings.json');
-if (!fs.existsSync(cachePath)) {
-  console.log('⚠️ 快取不存在,執行初始載入...');
-  const supabasePath = path.join(__dirname, 'supabase_fetch.js');
-  const { spawnSync } = await import('child_process');
-  const supabaseResult = spawnSync('node', [supabasePath], { stdio: 'inherit' });
-  if (supabaseResult.error || supabaseResult.status !== 0) {
-    console.error('❌ 執行 supabase_fetch.js 失敗');
-  }
-} else {
-  console.log('✅ 使用現有快取');
-}
+
 
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
