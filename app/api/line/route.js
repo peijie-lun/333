@@ -99,12 +99,17 @@ export async function POST(req) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
 
-        console.log('使用者輸入:', userText);
+        console.log('📩 使用者輸入:', userText);
 
-        // 0️⃣ 投票訊息 → 呼叫 /api/votes 並直接回覆
-        if (userText.startsWith('vote:')) {
+        // 0️⃣ 投票訊息 → 優先攔截，呼叫 /api/votes
+        if (userText.includes('vote:')) {
+          console.log('🗳️ 偵測到投票訊息，轉發至 /api/votes');
           try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'https://your-domain.vercel.app'}/api/votes`, {
+            const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || process.env.VERCEL_URL 
+              ? `https://${process.env.VERCEL_URL}` 
+              : 'http://localhost:3000';
+            
+            const response = await fetch(`${baseUrl}/api/votes`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -112,14 +117,18 @@ export async function POST(req) {
                 line_user_id: userId
               })
             });
+            
             const result = await response.json();
+            console.log('✅ votes API 回應:', result);
+            
             const replyText = result.message || result.error || '投票處理完成';
             await client.replyMessage(replyToken, { type: 'text', text: replyText });
+            console.log('✅ 投票回覆成功');
           } catch (err) {
-            console.error('投票處理失敗:', err);
+            console.error('❌ 投票處理失敗:', err);
             await client.replyMessage(replyToken, { type: 'text', text: '投票失敗，請稍後再試' });
           }
-          continue;
+          continue; // 跳過後續處理
         }
 
         // 1️⃣ 公共設施 → 固定 Flex Message
