@@ -63,9 +63,15 @@ export async function POST(req) {
 
       // MESSAGE 事件 → 綁定或已綁定提醒
       if (event.type === 'message') {
-        if (!isAlreadyBound) {
-          // 尚未綁定 → 寫入資料庫
-          const { error } = await supabase.from('line_users').upsert(
+        // 只有 profile 有變動才 upsert
+        const profileChanged =
+          !existingUser ||
+          existingUser.display_name !== (profile.displayName || '') ||
+          existingUser.avatar_url !== (profile.pictureUrl || '') ||
+          existingUser.status_message !== (profile.statusMessage || '');
+
+        if (profileChanged) {
+          const { error: upsertError } = await supabase.from('line_users').upsert(
             [
               {
                 line_user_id: userId,
@@ -76,15 +82,16 @@ export async function POST(req) {
             ],
             { onConflict: 'line_user_id' }
           );
-          if (error) console.error('❌ Supabase 寫入錯誤:', error);
+          if (upsertError) console.error('❌ Supabase 寫入錯誤:', upsertError);
+        }
 
-          // 回覆綁定成功
+        // 回覆訊息（可依原本邏輯）
+        if (!isAlreadyBound) {
           await client.replyMessage(event.replyToken, {
             type: 'text',
             text: `綁定完成！🎉\n歡迎你，${profile.displayName || '使用者'}！`
           });
         } else {
-          // 已綁定 → 簡單提醒
           await client.replyMessage(event.replyToken, {
             type: 'text',
             text: `你已經完成綁定囉，${profile.displayName || '使用者'} 😊`
