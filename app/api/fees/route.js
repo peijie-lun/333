@@ -37,7 +37,7 @@ export async function POST(req) {
     }
 
     // --- 1. 儲存到 Supabase ---
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('fees')
       .insert([
         {
@@ -45,11 +45,10 @@ export async function POST(req) {
           amount,
           due,
           invoice: invoice || '',
-            created_at: time
-        
-            
+          created_at: time
         }
-      ]);
+      ])
+      .select('id');
 
     if (error) {
       console.error('Supabase 插入錯誤:', error);
@@ -91,7 +90,7 @@ export async function POST(req) {
     }
 
     // --- 成功 ---
-    return Response.json({ success: true });
+    return Response.json({ success: true, id: data?.[0]?.id });
 
   } catch (err) {
     console.error('fees POST 錯誤:', err);
