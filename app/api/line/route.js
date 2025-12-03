@@ -104,12 +104,14 @@ export async function POST(req) {
         // 0️⃣ 投票訊息 → 直接在 webhook 處理
         if (userText.includes('vote:')) {
           console.log('🗳️ 偵測到投票訊息');
-          let replied = false;
           try {
             const parts = userText.split(':');
             if (parts.length < 3) {
-              await client.replyMessage(replyToken, { type: 'text', text: '投票訊息格式錯誤' });
-              replied = true;
+              try {
+                await client.replyMessage(replyToken, { type: 'text', text: '投票訊息格式錯誤' });
+              } catch (e) {
+                console.error('❌ LINE 回覆失敗:', e.message);
+              }
               continue;
             }
 
@@ -124,8 +126,11 @@ export async function POST(req) {
               .single();
 
             if (!voteExists) {
-              await client.replyMessage(replyToken, { type: 'text', text: '投票已過期或不存在' });
-              replied = true;
+              try {
+                await client.replyMessage(replyToken, { type: 'text', text: '投票已過期或不存在' });
+              } catch (e) {
+                console.error('❌ LINE 回覆失敗:', e.message);
+              }
               continue;
             }
 
@@ -139,8 +144,11 @@ export async function POST(req) {
               .single();
 
             if (!userProfile || !userProfile.profile_id) {
-              await client.replyMessage(replyToken, { type: 'text', text: '找不到住戶資料' });
-              replied = true;
+              try {
+                await client.replyMessage(replyToken, { type: 'text', text: '找不到住戶資料' });
+              } catch (e) {
+                console.error('❌ LINE 回覆失敗:', e.message);
+              }
               continue;
             }
 
@@ -156,8 +164,11 @@ export async function POST(req) {
               .maybeSingle();
 
             if (existingVote) {
-              await client.replyMessage(replyToken, { type: 'text', text: '您已經投過票' });
-              replied = true;
+              try {
+                await client.replyMessage(replyToken, { type: 'text', text: '您已經投過票' });
+              } catch (e) {
+                console.error('❌ LINE 回覆失敗:', e.message);
+              }
               continue;
             }
 
@@ -172,23 +183,22 @@ export async function POST(req) {
 
             if (error) {
               console.error('❌ 投票寫入失敗:', error);
-              await client.replyMessage(replyToken, { type: 'text', text: '投票失敗' });
-              replied = true;
+              try {
+                await client.replyMessage(replyToken, { type: 'text', text: '投票失敗' });
+              } catch (e) {
+                console.error('❌ LINE 回覆失敗:', e.message);
+              }
               continue;
             }
 
             console.log('✅ 投票成功');
-            await client.replyMessage(replyToken, { type: 'text', text: `確認，您的投票結果為「${option_selected}」` });
-            replied = true;
+            try {
+              await client.replyMessage(replyToken, { type: 'text', text: `確認，您的投票結果為「${option_selected}」` });
+            } catch (e) {
+              console.error('❌ LINE 回覆失敗:', e.message);
+            }
           } catch (err) {
             console.error('❌ 投票處理失敗:', err);
-            if (!replied) {
-              try {
-                await client.replyMessage(replyToken, { type: 'text', text: '投票失敗，請稍後再試' });
-              } catch (replyErr) {
-                console.error('❌ 回覆失敗 (replyToken 可能已使用):', replyErr);
-              }
-            }
           }
           continue;
         }
