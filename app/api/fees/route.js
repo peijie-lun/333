@@ -1,14 +1,14 @@
+import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Client } from '@line/bot-sdk';
 
 export const runtime = 'nodejs';
 
 // --- LINE Bot ---
-const lineConfig = {
+const client = new Client({
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
-};
-const client = new Client(lineConfig);
+});
 
 // --- Supabase ---
 const supabase = createClient(
@@ -19,90 +19,158 @@ const supabase = createClient(
 export async function POST(req) {
   try {
     const body = await req.json();
-    const { room, amount, due, invoice, test } = body;
+    const mode = body.mode;
 
-    // --- 防呆檢查 ---
-    if (!room || !amount || !due) {
-      return Response.json(
-        { error: 'room, amount, due 為必填' },
-        { status: 400 }
-      );
+    // =====================================================
+    //  A. 管理者「催繳住戶」模式 (mode: "remind")
+    // =====================================================
+    if (mode === 'remind') {
+      const { feeId, customMessage } = body;
+
+      if (!feeId) {
+        return NextResponse.json({ error: 'feeId 必填' }, { status: 400 });
+      }
+
+      // 1) 取帳單
+      const { data: fee, error: feeErr } = await supabase
+        .from('fees')
+        .select('id, room, amount, due, paid, note')
+        .eq('id', feeId)
+        .single();
+
+      if (feeErr || !fee) {
+        return NextResponse.json({ error: 'Fee not found' }, { status: 404 });
+      }
+
+      // 2) 找對應房號的使用者（profiles）
+      const { data: profile, error: pErr } = await supabase
+        .from('profiles')
+        .select('id, name, room, line_user_id')
+        .eq('room', fee.room)
+        .maybeSingle();
+           
+      if (pErr) return NextResponse.json({ error: '查詢 profiles 失敗', detail: pErr.message }, { status: 500 });
+
+      if (!profile?.id)
+        return NextResponse.json({ error: `未找到房號 ${fee.room} 的住戶` }, { status: 400 });
+
+      // 3) line_user_id
+      let lineUserId = profile.line_user_id ?? null;
+
+      if (!lineUserId) {
+        const { data: lu } = await supabase
+          .from('line_users')
+          .select('line_user_id')
+          .eq('profile_id', profile.id)
+          .maybeSingle();
+
+        lineUserId = lu?.line_user_id ?? null;
+      }
+
+      if (!lineUserId)
+        return NextResponse.json({ error: '此住戶未綁定 LINE' }, { status: 400 });
+
+      // 4) 訊息內容
+      const text =
+        customMessage ??
+        `📢 管理費催繳通知\n\n` +
+          `親愛的 ${profile?.name ?? fee.room} 您好，\n` +
+          `您的管理費尚未繳清：\n` +
+          `🏠 房號：${fee.room}\n` +
+          `💰 金額：${fee.amount}\n` +
+          `📅 到期日：${fee.due}\n` +
+          `狀態：${fee.paid ? '已繳' : '未繳'}\n` +
+          `${fee.note ? `備註：${fee.note}\n` : ''}\n` +
+          `請盡快完成繳費，謝謝！`;
+
+      // 5) LINE 推播
+      await client.pushMessage(lineUserId, [{ type: 'text', text }]);
+
+      // 6) 更新最後催繳時間（可自行加欄位）
+      await supabase.from('fees').update({ updated_at: new Date().toISOString() }).eq('id', fee.id);
+
+      return NextResponse.json({ ok: true, message: '催繳已發送' });
     }
 
-    const time = new Date().toLocaleString('zh-TW', { hour12: false });
+    // =====================================================
+    //  B. 新增帳單 & 推播 (mode: "create")
+    // =====================================================
+    if (mode === 'create') {
+      const { room, amount, due, invoice, test } = body;
 
-    // --- 測試模式 ---
-    if (test === true) {
-      return Response.json({ message: '測試成功' });
+      if (!room || !amount || !due) {
+        return NextResponse.json(                                               
+          { error: 'room, amount, due 為必填' },
+          { status: 400 }
+        );
+      }
+
+      const createdAt = new Date().toLocaleString('zh-TW', { hour12: false });
+
+      // 測試模式：不寫 DB、不推播
+      if (test === true) {
+        return NextResponse.json({ message: '測試成功' });
+      }
+
+      // 1) 新增帳單
+      const { data, error } = await supabase
+        .from('fees')
+        .insert([
+          {
+            room,
+            amount,
+            due,
+            invoice: invoice || '',
+            created_at: createdAt,
+          },
+        ])
+        .select('id');
+
+      if (error) {
+        console.error('Supabase 插入錯誤:', error);
+        return NextResponse.json({ error }, { status: 500 });
+      }
+
+      // 2) 找住戶 LINE ID（用 profiles）
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('line_user_id, name')
+        .eq('room', room)
+        .maybeSingle();
+
+      let lineUserId = profile?.line_user_id;
+
+      if (lineUserId) {
+        const notifyText =
+          `💰 管理費通知\n` +
+          `房號：${room}\n` +
+          `金額：NT$ ${amount}\n` +
+          `到期日：${due}\n` +
+          `發票：${invoice || '無'}\n` +
+          `建立時間：${createdAt}`;
+
+        await client.pushMessage(lineUserId, [{ type: 'text', text: notifyText }]);
+      }
+
+      return NextResponse.json({ success: true, id: data?.[0]?.id });
     }
 
-    // --- 1. 儲存到 Supabase ---
-    const { data, error } = await supabase
-      .from('fees')
-      .insert([
-        {
-          room,
-          amount,
-          due,
-          invoice: invoice || '',
-          created_at: time
-        }
-      ])
-      .select('id');
-
-    if (error) {
-      console.error('Supabase 插入錯誤:', error);
-      return Response.json({ error }, { status: 500 });
-    }
-
-    // --- 2. LINE 推播 ---
-    const lineUserId = 'U5dbd8b5fb153630885b656bb5f8ae011'; // 之後可改成動態
-
-    const pushBody = {
-      to: lineUserId,
-      messages: [
-        {
-          type: 'text',
-          text:
-            `💰 管理費通知\n` +
-            `房號：${room}\n` +
-            `金額：NT$ ${amount}\n` +
-            `到期日：${due}\n` +
-            `發票：${invoice || '無'}\n` +
-            `建立時間：${time}`
-        }
-      ],
-    };
-
-    const lineRes = await fetch('https://api.line.me/v2/bot/message/push', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
-      },
-      body: JSON.stringify(pushBody),
-    });
-
-    if (!lineRes.ok) {
-      const errText = await lineRes.text();
-      console.error('LINE 推播失敗:', errText);
-      return Response.json({ error: errText }, { status: 500 });
-    }
-
-    // --- 成功 ---
-    return Response.json({ success: true, id: data?.[0]?.id });
+    // =====================================================
+    //  C. 其他 mode 無效
+    // =====================================================
+    return NextResponse.json({ error: '未知的 mode' }, { status: 400 });
 
   } catch (err) {
-    console.error('fees POST 錯誤:', err);
-    return Response.json(
-      { error: 'Internal Server Error', details: err.message },
+    console.error('fees API 錯誤:', err);
+    return NextResponse.json(
+      { error: 'Internal Server Error', detail: err.message },
       { status: 500 }
     );
-  }
+  }                 
 }
 
 export async function GET() {
-  return Response.json(
+  return NextResponse.json(
     { error: 'Method Not Allowed' },
     { status: 405 }
   );
