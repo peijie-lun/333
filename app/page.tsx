@@ -1,7 +1,67 @@
-
 'use client';
 
 import { useState } from 'react';
+
+// 催繳按鈕組件
+function RemindButton({ feeId, onSuccess }) {
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const remind = async () => {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const resp = await fetch('/api/remind-fee', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-key': process.env.NEXT_PUBLIC_ADMIN_API_KEY || '',
+        },
+        body: JSON.stringify({ feeId }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        setMsg('已送出催繳訊息');
+        if (onSuccess) onSuccess();
+      } else {
+        setMsg(`失敗：${data.error}`);
+      }
+    } catch (e) {
+      setMsg(`例外：${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+      <button 
+        onClick={remind} 
+        disabled={loading}
+        style={{
+          padding: '8px 16px',
+          borderRadius: '6px',
+          border: 'none',
+          backgroundColor: loading ? '#ccc' : '#FF5722',
+          color: 'white',
+          fontSize: '14px',
+          fontWeight: 'bold',
+          cursor: loading ? 'not-allowed' : 'pointer'
+        }}
+      >
+        {loading ? '送出中…' : '催繳'}
+      </button>
+      {msg && (
+        <small style={{ 
+          color: msg.includes('失敗') || msg.includes('例外') ? 'red' : 'green',
+          fontSize: '12px'
+        }}>
+          {msg}
+        </small>
+      )}
+    </div>
+  );
+}
 
 export default function AdminDashboard() {
   // 公告狀態
@@ -26,6 +86,7 @@ export default function AdminDashboard() {
   const [feeInvoice, setFeeInvoice] = useState('');
   const [feeLoading, setFeeLoading] = useState(false);
   const [feeMessage, setFeeMessage] = useState('');
+  const [lastCreatedFeeId, setLastCreatedFeeId] = useState(null);
 
   // 包裹管理狀態
   const [pkgCourier, setPkgCourier] = useState('');
@@ -91,6 +152,7 @@ export default function AdminDashboard() {
     e.preventDefault();
     setFeeLoading(true);
     setFeeMessage('');
+    setLastCreatedFeeId(null);
     try {
       const res = await fetch('/api/fees', {
         method: 'POST',
@@ -100,6 +162,7 @@ export default function AdminDashboard() {
       const data = await res.json();
       if (res.ok) {
         setFeeMessage('✅ 管理費已新增並推播到 LINE Bot！');
+        setLastCreatedFeeId(data.id || data.feeId); // 保存新建的管理費ID
         setFeeRoom(''); setFeeAmount(''); setFeeDue(''); setFeeInvoice('');
       } else {
         setFeeMessage(`❌ 錯誤：${data.error || '無法新增管理費'}`);
@@ -153,7 +216,8 @@ export default function AdminDashboard() {
   const inputStyle = {
     padding: '12px',
     borderRadius: '8px',
-    border: '1px solid #ccc'
+    border: '1px solid #ccc',
+    width: '100%'
   };
 
   const buttonStyle = (color) => ({
@@ -164,7 +228,8 @@ export default function AdminDashboard() {
     color: 'white',
     fontSize: '16px',
     fontWeight: 'bold',
-    cursor: 'pointer'
+    cursor: 'pointer',
+    width: '100%'
   });
 
   return (
@@ -172,52 +237,65 @@ export default function AdminDashboard() {
       {/* 公告 */}
       <section style={cardStyle}>
         <h2 style={{ textAlign: 'center', marginBottom: '20px', color: '#333' }}>發布公告</h2>
-        <form onSubmit={handleAnnounceSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-          <input type="text" placeholder="公告標題" value={announceTitle} onChange={(e) => setAnnounceTitle(e.target.value)} required style={inputStyle} />
-          <textarea placeholder="公告內容" value={announceContent} onChange={(e) => setAnnounceContent(e.target.value)} rows={4} required style={inputStyle} />
-          <input type="text" placeholder="發布者" value={announceAuthor} onChange={(e) => setAnnounceAuthor(e.target.value)} required style={inputStyle} />
-          <button type="submit" disabled={announceLoading} style={buttonStyle('#2196F3')}>{announceLoading ? '發布中...' : '儲存公告並推播'}</button>
-        </form>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+          <input type="text" placeholder="公告標題" value={announceTitle} onChange={(e) => setAnnounceTitle(e.target.value)} style={inputStyle} />
+          <textarea placeholder="公告內容" value={announceContent} onChange={(e) => setAnnounceContent(e.target.value)} rows={4} style={inputStyle} />
+          <input type="text" placeholder="發布者" value={announceAuthor} onChange={(e) => setAnnounceAuthor(e.target.value)} style={inputStyle} />
+          <button onClick={handleAnnounceSubmit} disabled={announceLoading} style={buttonStyle('#2196F3')}>{announceLoading ? '發布中...' : '儲存公告並推播'}</button>
+        </div>
         {announceMessage && <p style={{ marginTop: '15px', textAlign: 'center', color: announceMessage.includes('錯誤') ? 'red' : 'green' }}>{announceMessage}</p>}
       </section>
 
       {/* 投票 */}
       <section style={cardStyle}>
         <h2 style={{ textAlign: 'center', marginBottom: '20px', color: '#333' }}>新增投票</h2>
-        <form onSubmit={handleVoteSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-          <input type="text" placeholder="投票標題" value={voteTitle} onChange={(e) => setVoteTitle(e.target.value)} required style={inputStyle} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+          <input type="text" placeholder="投票標題" value={voteTitle} onChange={(e) => setVoteTitle(e.target.value)} style={inputStyle} />
           <textarea placeholder="投票說明" value={voteDescription} onChange={(e) => setVoteDescription(e.target.value)} rows={4} style={inputStyle} />
-          <input type="text" placeholder="發布者" value={voteAuthor} onChange={(e) => setVoteAuthor(e.target.value)} required style={inputStyle} />
-          <input type="datetime-local" placeholder="截止時間" value={voteEndsAt} onChange={(e) => setVoteEndsAt(e.target.value)} required style={inputStyle} />
-          <button type="submit" disabled={voteLoading} style={buttonStyle('#4CAF50')}>{voteLoading ? '發布中...' : '儲存投票並推播'}</button>
-        </form>
+          <input type="text" placeholder="發布者" value={voteAuthor} onChange={(e) => setVoteAuthor(e.target.value)} style={inputStyle} />
+          <input type="datetime-local" placeholder="截止時間" value={voteEndsAt} onChange={(e) => setVoteEndsAt(e.target.value)} style={inputStyle} />
+          <button onClick={handleVoteSubmit} disabled={voteLoading} style={buttonStyle('#4CAF50')}>{voteLoading ? '發布中...' : '儲存投票並推播'}</button>
+        </div>
         {voteMessage && <p style={{ marginTop: '15px', textAlign: 'center', color: voteMessage.includes('錯誤') ? 'red' : 'green' }}>{voteMessage}</p>}
       </section>
 
       {/* 管理費 */}
       <section style={cardStyle}>
         <h2 style={{ textAlign: 'center', marginBottom: '20px', color: '#333' }}>新增管理費</h2>
-        <form onSubmit={handleFeeSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-          <input type="text" placeholder="房號" value={feeRoom} onChange={(e) => setFeeRoom(e.target.value)} required style={inputStyle} />
-          <input type="number" placeholder="金額" value={feeAmount} onChange={(e) => setFeeAmount(e.target.value)} required style={inputStyle} />
-          <input type="date" placeholder="到期日" value={feeDue} onChange={(e) => setFeeDue(e.target.value)} required style={inputStyle} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+          <input type="text" placeholder="房號" value={feeRoom} onChange={(e) => setFeeRoom(e.target.value)} style={inputStyle} />
+          <input type="number" placeholder="金額" value={feeAmount} onChange={(e) => setFeeAmount(e.target.value)} style={inputStyle} />
+          <input type="date" placeholder="到期日" value={feeDue} onChange={(e) => setFeeDue(e.target.value)} style={inputStyle} />
           <input type="text" placeholder="發票號碼" value={feeInvoice} onChange={(e) => setFeeInvoice(e.target.value)} style={inputStyle} />
-          <button type="submit" disabled={feeLoading} style={buttonStyle('#FF9800')}>{feeLoading ? '新增中...' : '儲存管理費並推播'}</button>
-        </form>
-        {feeMessage && <p style={{ marginTop: '15px', textAlign: 'center', color: feeMessage.includes('錯誤') ? 'red' : 'green' }}>{feeMessage}</p>}
+          <button onClick={handleFeeSubmit} disabled={feeLoading} style={buttonStyle('#FF9800')}>{feeLoading ? '新增中...' : '儲存管理費並推播'}</button>
+        </div>
+        {feeMessage && (
+          <div style={{ marginTop: '15px', textAlign: 'center' }}>
+            <p style={{ color: feeMessage.includes('錯誤') ? 'red' : 'green', marginBottom: '10px' }}>{feeMessage}</p>
+            {lastCreatedFeeId && (
+              <div style={{ marginTop: '10px' }}>
+                <p style={{ fontSize: '14px', color: '#666', marginBottom: '8px' }}>需要催繳此筆管理費嗎?</p>
+                <RemindButton 
+                  feeId={lastCreatedFeeId} 
+                  onSuccess={() => setLastCreatedFeeId(null)}
+                />
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       {/* 包裹管理 */}
       <section style={cardStyle}>
         <h2 style={{ textAlign: 'center', marginBottom: '20px', color: '#333' }}>新增包裹</h2>
-        <form onSubmit={handlePackageSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-          <input type="text" placeholder="快遞公司" value={pkgCourier} onChange={(e) => setPkgCourier(e.target.value)} required style={inputStyle} />
-          <input type="text" placeholder="收件人" value={pkgRecipient} onChange={(e) => setPkgRecipient(e.target.value)} required style={inputStyle} />
-          <input type="text" placeholder="房號" value={pkgRoom} onChange={(e) => setPkgRoom(e.target.value)} required style={inputStyle} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+          <input type="text" placeholder="快遞公司" value={pkgCourier} onChange={(e) => setPkgCourier(e.target.value)} style={inputStyle} />
+          <input type="text" placeholder="收件人" value={pkgRecipient} onChange={(e) => setPkgRecipient(e.target.value)} style={inputStyle} />
+          <input type="text" placeholder="房號" value={pkgRoom} onChange={(e) => setPkgRoom(e.target.value)} style={inputStyle} />
           <input type="text" placeholder="追蹤號碼" value={pkgTracking} onChange={(e) => setPkgTracking(e.target.value)} style={inputStyle} />
-          <input type="datetime-local" placeholder="到達時間" value={pkgArrivedAt} onChange={(e) => setPkgArrivedAt(e.target.value)} required style={inputStyle} />
-          <button type="submit" disabled={pkgLoading} style={buttonStyle('#9C27B0')}>{pkgLoading ? '新增中...' : '儲存包裹並推播'}</button>
-        </form>
+          <input type="datetime-local" placeholder="到達時間" value={pkgArrivedAt} onChange={(e) => setPkgArrivedAt(e.target.value)} style={inputStyle} />
+          <button onClick={handlePackageSubmit} disabled={pkgLoading} style={buttonStyle('#9C27B0')}>{pkgLoading ? '新增中...' : '儲存包裹並推播'}</button>
+        </div>
         {pkgMessage && <p style={{ marginTop: '15px', textAlign: 'center', color: pkgMessage.includes('錯誤') ? 'red' : 'green' }}>{pkgMessage}</p>}
       </section>
     </main>
