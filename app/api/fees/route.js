@@ -1,4 +1,5 @@
 
+import { NextResponse } from 'next/server';
 import { Client } from '@line/bot-sdk';
 
 export const runtime = 'nodejs';
@@ -23,7 +24,7 @@ export async function POST(req) {
 
     // --- 防呆檢查 ---
     if (!room || !amount || !due) {
-      return Response.json(
+      return NextResponse.json(
         { error: 'room, amount, due 為必填' },
         { status: 400 }
       );
@@ -33,7 +34,7 @@ export async function POST(req) {
 
     // --- 測試模式 ---
     if (test === true) {
-      return Response.json({ message: '測試成功' });
+      return NextResponse.json({ message: '測試成功' });
     }
 
     // --- 1. 儲存到 Supabase ---
@@ -52,7 +53,7 @@ export async function POST(req) {
 
     if (error) {
       console.error('Supabase 插入錯誤:', error);
-      return Response.json({ error }, { status: 500 });
+      return NextResponse.json({ error }, { status: 500 });
     }
 
     // --- 2. LINE 推播 ---
@@ -86,15 +87,15 @@ export async function POST(req) {
     if (!lineRes.ok) {
       const errText = await lineRes.text();
       console.error('LINE 推播失敗:', errText);
-      return Response.json({ error: errText }, { status: 500 });
+      return NextResponse.json({ error: errText }, { status: 500 });
     }
 
     // --- 成功 ---
-    return Response.json({ success: true, id: data?.[0]?.id });
+    return NextResponse.json({ success: true, id: data?.[0]?.id });
 
   } catch (err) {
     console.error('fees POST 錯誤:', err);
-    return Response.json(
+    return NextResponse.json(
       { error: 'Internal Server Error', details: err.message },
       { status: 500 }
     );
@@ -102,7 +103,7 @@ export async function POST(req) {
 }
 
 export async function GET() {
-  return Response.json(
+  return NextResponse.json(
     { error: 'Method Not Allowed' },
     { status: 405 }
   );
