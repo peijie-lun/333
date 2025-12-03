@@ -34,16 +34,14 @@ export async function POST(req) {
         return Response.json({ error: '投票訊息格式錯誤' }, { status: 400 });
       }
 
-      const voteTitleFromMsg = parts[1].trim();
+      let voteIdFromMsg = parts[1].trim();
       const option_selected = parts[2].replace('🗳️', '').trim();
 
-      // 使用標題查詢 vote_id
+      // 確認 vote_id 在 votes 表中存在
       const { data: voteExists } = await supabase
         .from('votes')
         .select('id')
-        .eq('title', voteTitleFromMsg)
-        .order('created_at', { ascending: false })
-        .limit(1)
+        .eq('id', voteIdFromMsg)
         .single();
 
       if (!voteExists) {
@@ -183,7 +181,7 @@ export async function POST(req) {
           action: {
             type: 'message',
             label: `🗳️ ${opt}`,
-            text: `vote:${title}:${opt} 🗳️`
+            text: `vote:${vote_id}:${opt} 🗳️`
           }
         }))
       }
