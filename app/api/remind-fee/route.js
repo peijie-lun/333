@@ -10,17 +10,11 @@ const supabase = createClient(
 
 const LINE_API = 'https://api.line.me/v2/bot/message/push'
 const LINE_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY // 可選：用來保護此 API
+
 
 export async function POST(req) {
+
   try {
-    // （可選）簡單用 API key 防濫用：前端在 header 帶 x-admin-key
-    if (ADMIN_API_KEY) {
-      const key = req.headers.get('x-admin-key')
-      if (key !== ADMIN_API_KEY) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-      }
-    }
 
     const { feeId, customMessage } = await req.json()
     if (!feeId) {
