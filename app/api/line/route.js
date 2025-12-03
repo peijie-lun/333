@@ -104,10 +104,12 @@ export async function POST(req) {
         // 0️⃣ 投票訊息 → 直接在 webhook 處理
         if (userText.includes('vote:')) {
           console.log('🗳️ 偵測到投票訊息');
+          let replied = false;
           try {
             const parts = userText.split(':');
             if (parts.length < 3) {
               await client.replyMessage(replyToken, { type: 'text', text: '投票訊息格式錯誤' });
+              replied = true;
               continue;
             }
 
@@ -123,6 +125,7 @@ export async function POST(req) {
 
             if (!voteExists) {
               await client.replyMessage(replyToken, { type: 'text', text: '投票已過期或不存在' });
+              replied = true;
               continue;
             }
 
@@ -137,6 +140,7 @@ export async function POST(req) {
 
             if (!userProfile || !userProfile.profile_id) {
               await client.replyMessage(replyToken, { type: 'text', text: '找不到住戶資料' });
+              replied = true;
               continue;
             }
 
@@ -153,6 +157,7 @@ export async function POST(req) {
 
             if (existingVote) {
               await client.replyMessage(replyToken, { type: 'text', text: '您已經投過票' });
+              replied = true;
               continue;
             }
 
@@ -168,14 +173,22 @@ export async function POST(req) {
             if (error) {
               console.error('❌ 投票寫入失敗:', error);
               await client.replyMessage(replyToken, { type: 'text', text: '投票失敗' });
+              replied = true;
               continue;
             }
 
             console.log('✅ 投票成功');
             await client.replyMessage(replyToken, { type: 'text', text: `確認，您的投票結果為「${option_selected}」` });
+            replied = true;
           } catch (err) {
             console.error('❌ 投票處理失敗:', err);
-            await client.replyMessage(replyToken, { type: 'text', text: '投票失敗，請稍後再試' });
+            if (!replied) {
+              try {
+                await client.replyMessage(replyToken, { type: 'text', text: '投票失敗，請稍後再試' });
+              } catch (replyErr) {
+                console.error('❌ 回覆失敗 (replyToken 可能已使用):', replyErr);
+              }
+            }
           }
           continue;
         }
