@@ -14,146 +14,104 @@ const lineConfig = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-const client = new Client(lineConfig);
+const client = new Client(lineConfig);// LINE Bot SDK 客戶端
 
-const IMAGE_KEYWORDS = ['圖片', '設施', '游泳池', '健身房', '大廳'];
-
+const IMAGE_KEYWORDS = ['圖片', '設施', '游泳池', '健身房', '大廳'];// 可擴充更多關鍵字
+// 處理 LINE Webhook 請求
 export async function POST(req) {
   try {
-    const rawBody = await req.text();
+    const rawBody = await req.text();// 取得原始請求體
     if (!rawBody) return new Response('Bad Request: Empty body', { status: 400 });
 
-    let events;
+    let events;// 儲存事件陣列
     try {
-      events = JSON.parse(rawBody).events;
+      events = JSON.parse(rawBody).events;// 解析事件陣列
     } catch {
       return new Response('Bad Request: Invalid JSON', { status: 400 });
     }
 
-    for (const event of events) {
-      // 取得 userId
+    for (const event of events) {// 逐一處理每個事件
       const userId = event.source?.userId;
+      if (!userId) continue;
+
       // 嘗試抓 LINE Profile
       let profile = { displayName: '', pictureUrl: '', statusMessage: '' };
       try {
-        profile = await client.getProfile(userId);
+        profile = await client.getProfile(userId);// 抓取使用者個人資料
       } catch (err) {
         console.warn('⚠️ 無法抓到 profile，只存 userId。', err);
       }
 
-      // 檢查使用者是否已存在
-      const { data: existingUser, error: checkError } = await supabase
-        .from('line_users')
-        .select('*')
+      // --- 1. 檢查使用者是否已存在 profiles ---
+      const { data: existingProfile, error: checkError } = await supabase
+        .from('profiles')
+        .select('id, line_user_id, line_display_name, line_avatar_url, line_status_message')
         .eq('line_user_id', userId)
-        .single();
-      if (checkError && checkError.code !== 'PGRST116') {
+        .maybeSingle();
+
+      if (checkError) {
         console.error('❌ Supabase 檢查錯誤:', checkError);
       }
-      const isAlreadyBound = existingUser !== null;
 
-      // follow 事件：新用戶
-      if (event.type === 'follow') {
-        if (!isAlreadyBound) {
-          const { error } = await supabase.from('line_users').upsert(
-            [
-              {
-                line_user_id: userId,
-                display_name: profile.displayName || '',
-                avatar_url: profile.pictureUrl || '',
-                status_message: profile.statusMessage || '',
-                updated_at: new Date().toISOString(),
-              },
-            ],
-            { onConflict: 'line_user_id' }
-          );
-          if (error) console.error('❌ Supabase 寫入錯誤:', error);
-        }
-        continue;
+      const profileChanged =
+        !existingProfile ||
+        existingProfile.line_display_name !== (profile.displayName || '') ||
+        existingProfile.line_avatar_url !== (profile.pictureUrl || '') ||
+        existingProfile.line_status_message !== (profile.statusMessage || '');
+
+      // follow 事件或 profile 變動才 upsert
+      if (event.type === 'follow' || profileChanged) {
+        const { error: upsertError } = await supabase.from('profiles').upsert([
+          {
+            id: existingProfile?.id || null,
+            line_user_id: userId,
+            line_display_name: profile.displayName || '',
+            line_avatar_url: profile.pictureUrl || '',
+            line_status_message: profile.statusMessage || '',
+            updated_at: new Date().toISOString(),
+          }
+        ], { onConflict: 'line_user_id' });
+
+        if (upsertError) console.error('❌ Supabase upsert 錯誤:', upsertError);
       }
 
-      // message 事件：有 profile 變動才更新
-      if (event.type === 'message') {
-        const profileChanged =
-          !existingUser ||
-          existingUser.display_name !== (profile.displayName || '') ||
-          existingUser.avatar_url !== (profile.pictureUrl || '') ||
-          existingUser.status_message !== (profile.statusMessage || '');
-        if (profileChanged) {
-          const { error: upsertError } = await supabase.from('line_users').upsert(
-            [
-              {
-                line_user_id: userId,
-                display_name: profile.displayName || '',
-                avatar_url: profile.pictureUrl || '',
-                status_message: profile.statusMessage || '',
-                updated_at: new Date().toISOString(),
-              },
-            ],
-            { onConflict: 'line_user_id' }
-          );
-          if (upsertError) console.error('❌ Supabase 寫入錯誤:', upsertError);
-        }
-      }
+      // --- 2. 處理文字訊息 ---
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
-
         console.log('📩 使用者輸入:', userText);
 
-        // 0️⃣ 投票訊息 → 直接在 webhook 處理
+        // 0️⃣ 投票訊息
         if (userText.includes('vote:')) {
-          console.log('🗳️ 偵測到投票訊息');
           try {
             const parts = userText.split(':');
             if (parts.length < 3) {
-              try {
-                await client.replyMessage(replyToken, { type: 'text', text: '投票訊息格式錯誤' });
-              } catch (e) {
-                console.error('❌ LINE 回覆失敗:', e.message);
-              }
+              await client.replyMessage(replyToken, { type: 'text', text: '投票訊息格式錯誤' });
               continue;
             }
 
             const voteIdFromMsg = parts[1].trim();
             const option_selected = parts[2].replace('🗳️', '').trim();
 
-            // 確認 vote存在
             const { data: voteExists } = await supabase
               .from('votes')
               .select('id')
               .eq('id', voteIdFromMsg)
-              .single();
+              .maybeSingle();
 
             if (!voteExists) {
-              try {
-                await client.replyMessage(replyToken, { type: 'text', text: '投票已過期或不存在' });
-              } catch (e) {
-                console.error('❌ LINE 回覆失敗:', e.message);
-              }
+              await client.replyMessage(replyToken, { type: 'text', text: '投票已過期或不存在' });
               continue;
             }
 
             const vote_id = voteExists.id;
+            const user_id = existingProfile?.id;
+            const user_name = existingProfile?.line_display_name;
 
-            // 查詢 profile_id
-            const { data: userProfile } = await supabase
-              .from('line_users')
-              .select('display_name, profile_id')
-              .eq('line_user_id', userId)
-              .single();
-
-            if (!userProfile || !userProfile.profile_id) {
-              try {
-                await client.replyMessage(replyToken, { type: 'text', text: '找不到住戶資料' });
-              } catch (e) {
-                console.error('❌ LINE 回覆失敗:', e.message);
-              }
+            if (!user_id) {
+              await client.replyMessage(replyToken, { type: 'text', text: '找不到住戶資料' });
               continue;
             }
-
-            const user_id = userProfile.profile_id;
-            const user_name = userProfile.display_name;
 
             // 防止重複投票
             const { data: existingVote } = await supabase
@@ -164,16 +122,11 @@ export async function POST(req) {
               .maybeSingle();
 
             if (existingVote) {
-              try {
-                await client.replyMessage(replyToken, { type: 'text', text: '您已經投過票' });
-              } catch (e) {
-                console.error('❌ LINE 回覆失敗:', e.message);
-              }
+              await client.replyMessage(replyToken, { type: 'text', text: '您已經投過票' });
               continue;
             }
 
-            // 寫入投票
-            const { error } = await supabase.from('vote_records').insert([{
+            const { error: voteError } = await supabase.from('vote_records').insert([{
               vote_id,
               user_id,
               user_name,
@@ -181,29 +134,20 @@ export async function POST(req) {
               voted_at: new Date().toISOString()
             }]);
 
-            if (error) {
-              console.error('❌ 投票寫入失敗:', error);
-              try {
-                await client.replyMessage(replyToken, { type: 'text', text: '投票失敗' });
-              } catch (e) {
-                console.error('❌ LINE 回覆失敗:', e.message);
-              }
+            if (voteError) {
+              console.error('❌ 投票寫入失敗:', voteError);
+              await client.replyMessage(replyToken, { type: 'text', text: '投票失敗' });
               continue;
             }
 
-            console.log('✅ 投票成功');
-            try {
-              await client.replyMessage(replyToken, { type: 'text', text: `確認，您的投票結果為「${option_selected}」` });
-            } catch (e) {
-              console.error('❌ LINE 回覆失敗:', e.message);
-            }
+            await client.replyMessage(replyToken, { type: 'text', text: `確認，您的投票結果為「${option_selected}」` });
           } catch (err) {
             console.error('❌ 投票處理失敗:', err);
           }
           continue;
         }
 
-        // 1️⃣ 公共設施 → 固定 Flex Message
+        // 1️⃣ 公共設施
         if (userText.includes('公共設施')) {
           const carouselMessage = {
             type: 'flex',
@@ -264,17 +208,15 @@ export async function POST(req) {
           continue;
         }
 
-        // 2️⃣ 圖片關鍵字 → 目前回覆暫時文字提示
+        // 2️⃣ 圖片關鍵字
         if (IMAGE_KEYWORDS.some(kw => userText.includes(kw))) {
           await client.replyMessage(replyToken, { type: 'text', text: '目前圖片查詢功能尚未啟用。' });
           continue;
         }
 
-        // 3️⃣ 其他 → 呼叫 Groq LLM API（純 Node.js，不再用 Python）
+        // 3️⃣ 其他 → Groq LLM
         try {
-          // 使用你原本 lib/grokmain.js 的 generateAnswer 函數
           const answer = await generateAnswer(userText);
-          // 修正：確保 answer 一定是字串再呼叫 .trim()
           const replyMessage = typeof answer === 'string' ? answer.trim() : '目前沒有找到相關資訊，請查看社區公告。';
           await client.replyMessage(replyToken, { type: 'text', text: replyMessage });
         } catch (err) {
