@@ -1,3 +1,7 @@
+// ES module export for Next.js
+export async function generateAnswer(query) {
+  return await chat(query);
+}
 // grokmain.js - 使用 Supabase pgvector 版本
 require('dotenv').config({ path: __dirname + '/.env' });
 
@@ -12,8 +16,8 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// 生成 embedding 向量
-function getEmbedding(text) {
+// 生成 embedding 向量                             
+function getEmbedding(text) {              
   try {
     const py = spawnSync('python', [__dirname + '/embedding.py', text], { encoding: 'utf-8' });
     if (py.error || py.status !== 0) {
