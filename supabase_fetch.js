@@ -1,129 +1,135 @@
+// supabase_fetch_v2.js - 將 embedding 儲存到 Supabase
+require('dotenv').config({ path: __dirname + '/.env' });
 
-import fs from 'fs';
-import path from 'path';
-import dotenv from 'dotenv';
-import axios from 'axios';
-import { createClient } from '@supabase/supabase-js';
-
-dotenv.config({ path: path.join(process.cwd(), '.env') });
+const { createClient } = require('@supabase/supabase-js');
+const { spawnSync } = require('child_process');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY; // 或改用 GROQ API
-
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  throw new Error('請在 .env 設定 SUPABASE_URL 和 SUPABASE_ANON_KEY');
-}
-
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const cachePath = path.join(process.cwd(), 'supabase_embeddings.json');
 
-// ✅ Embedding function (OpenAI)
-async function getEmbedding(text) {
+// 生成 embedding
+function getEmbedding(text) {
+  const py = spawnSync('python', [__dirname + '/embedding.py', text], { encoding: 'utf-8' });
+  if (py.error || py.status !== 0) {
+    console.error('[Error] embedding 生成失敗:', py.stderr);
+    return null;
+  }
   try {
-    const response = await axios.post(
-      'https://api.openai.com/v1/embeddings',
-      {
-        model: 'text-embedding-3-small',
-        input: text
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    return response.data.data[0].embedding;
-  } catch (error) {
-    console.error('Embedding API 錯誤:', error.response?.data || error.message);
+    return JSON.parse(py.stdout);
+  } catch {
+    console.error('[Error] embedding 解析失敗');
     return null;
   }
 }
 
-async function fetchAndCache(forceUpdate = false) {
-  if (forceUpdate && fs.existsSync(cachePath)) {
-    console.log('🔄 強制更新模式: 清除舊快取');
-    fs.unlinkSync(cachePath);
-  }
+// 更新所有 knowledge 資料的 embedding
+async function updateKnowledgeEmbeddings() {
+  console.log('\n[Batch] 開始更新 knowledge embedding...');
 
-  // ✅ 預設 FAQ
-  const defaultFaqs = [
-    '本大樓禁止飼養寵物，違者將依規定處理。',
-    '問：可以養寵物嗎？\n答：本大樓禁止飼養寵物，違者將依規定處理。',
-    '問：垃圾要什麼時候丟？\n答：垃圾請於每日晚上八點至九點間丟置指定地點。',
-    '問：停車場可以給訪客停車嗎？\n答：停車場僅供本社區住戶使用，外來車輛請勿停放。'
-  ];
-
-  // ✅ 查詢現有 FAQ
-  const { data: existData, error: existError } = await supabase
+  // 1. 抓取所有沒有 embedding 的資料
+  const { data: items, error } = await supabase
     .from('knowledge')
-    .select('content');
-  if (existError) {
-    console.error('Supabase 讀取 knowledge 失敗:', existError);
+    .select('id, content')
+    .is('embedding', null);
+
+  if (error) {
+    console.error('[Error] 查詢失敗:', error);
     return;
   }
 
-  const existSet = new Set((existData || []).map(row => row.content));
-  for (const faq of defaultFaqs) {
-    if (!existSet.has(faq)) {
-      await supabase.from('knowledge').insert({ content: faq });
-      console.log('已補 FAQ：', faq);
-    }
-  }
+  console.log(`找到 ${items.length} 筆需要更新的資料`);
 
-  // ✅ 重新查詢最新 FAQ
-  const { data, error } = await supabase.from('knowledge').select('id, content');
-  if (error || !data || data.length === 0) {
-    console.error('Supabase 讀取 knowledge 失敗:', error);
-    return;
-  }
+  // 2. 為每筆資料生成 embedding 並更新
+  let successCount = 0;
+  let failCount = 0;
 
-  let cache = {};
-  if (fs.existsSync(cachePath)) {
-    try {
-      cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-    } catch {}
-  }
+  for (const item of items) {
+    const embedding = getEmbedding(item.content);
+    
+    if (embedding) {
+      const { error: updateError } = await supabase
+        .from('knowledge')
+        .update({ embedding })
+        .eq('id', item.id);
 
-  let updated = false;
-  for (const row of data) {
-    const key = String(row.id);
-    if (!cache[key] || cache[key].content !== row.content) {
-      const embedding = await getEmbedding(row.content);
-      if (embedding) {
-        cache[key] = { content: row.content, embedding };
-        updated = true;
-        console.log(`✅ 已更新 embedding: id=${key}`);
+      if (updateError) {
+        console.error(`[Error] ID ${item.id} 更新失敗:`, updateError);
+        failCount++;
+      } else {
+        successCount++;
+        console.log(`[Success] ID ${item.id} 更新成功 (${successCount}/${items.length})`);
       }
+    } else {
+      console.error(`[Error] ID ${item.id} embedding 生成失敗`);
+      failCount++;
     }
   }
 
-  // ✅ 處理圖片資料
-  const { data: imageData } = await supabase.from('images').select('id, url, description');
-  if (imageData && imageData.length > 0) {
-    for (const img of imageData) {
-      const imgKey = `img_${img.id}`;
-      const imgContent = `圖片: ${img.description || '無描述'}\nURL: ${img.url}`;
-      if (!cache[imgKey] || cache[imgKey].content !== imgContent) {
-        const embedding = await getEmbedding(imgContent);
-        if (embedding) {
-          cache[imgKey] = { content: imgContent, embedding, type: 'image', url: img.url };
-          updated = true;
-          console.log(`🖼️ 已加入圖片 embedding: ${imgKey}`);
-        }
-      }
-    }
-  }
-
-  if (updated) {
-    fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf-8');
-    console.log('✅ supabase_embeddings.json 已更新');
-  } else {
-    console.log('✨ 所有 embedding 已是最新');
-  }
+  console.log(`\n[Batch] knowledge 更新完成: 成功 ${successCount}, 失敗 ${failCount}`);
 }
 
-const forceUpdate = process.argv.includes('--force');
-fetchAndCache(forceUpdate);
+// 更新所有 images 資料的 embedding
+async function updateImageEmbeddings() {
+  console.log('\n[Batch] 開始更新 images embedding...');
+
+  const { data: items, error } = await supabase
+    .from('images')
+    .select('id, url, description')
+    .is('embedding', null);
+
+  if (error) {
+    console.error('[Error] 查詢失敗:', error);
+    return;
+  }
+
+  console.log(`找到 ${items.length} 筆需要更新的圖片`);
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const item of items) {
+    const imgContent = `圖片: ${item.description || '無描述'}\nURL: ${item.url}`;
+    const embedding = getEmbedding(imgContent);
+    
+    if (embedding) {
+      const { error: updateError } = await supabase
+        .from('images')
+        .update({ embedding })
+        .eq('id', item.id);
+
+      if (updateError) {
+        console.error(`[Error] ID ${item.id} 更新失敗:`, updateError);
+        failCount++;
+      } else {
+        successCount++;
+        console.log(`[Success] ID ${item.id} 更新成功 (${successCount}/${items.length})`);
+      }
+    } else {
+      console.error(`[Error] ID ${item.id} embedding 生成失敗`);
+      failCount++;
+    }
+  }
+
+  console.log(`\n[Batch] images 更新完成: 成功 ${successCount}, 失敗 ${failCount}`);
+}
+
+// 主程式
+async function main() {
+  console.log('[Batch] 開始批次更新 embedding 到 Supabase...\n');
   
+  await updateKnowledgeEmbeddings();
+  await updateImagesEmbeddings();
+  
+  console.log('\n[Batch] 所有更新完成!');
+}
+
+// 執行
+if (require.main === module) {
+  main().then(() => process.exit(0)).catch(err => {
+    console.error('[Error] 執行失敗:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { updateKnowledgeEmbeddings, updateImagesEmbeddings };
