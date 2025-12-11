@@ -36,4 +36,4 @@ bot.on('message', async function (event) {
     }
   }
   await event.reply(replyText);
-});
+});                                                      
