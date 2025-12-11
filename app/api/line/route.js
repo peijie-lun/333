@@ -4,7 +4,7 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
-import { generateAnswer, getImageUrlsByKeyword } from '../../../grokmain.js';
+import { generateAnswer, getImageUrlsByKeyword } from '../../../grokmain.cjs';
 import 'dotenv/config';
 
 export const runtime = 'nodejs';

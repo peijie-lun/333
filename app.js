@@ -1,6 +1,6 @@
 // app.js - 使用 Supabase pgvector 版本
 const express = require('express');
-const { chat } = require('./grokmain');
+const { chat } = require('./grokmain.cjs');
 const { startAutoSync, stopAutoSync } = require('./supabase_auto_sync');
 
 const app = express();

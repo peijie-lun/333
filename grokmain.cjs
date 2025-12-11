@@ -1,8 +1,4 @@
-// ES module export for Next.js
-export async function generateAnswer(query) {
-  return await chat(query);
-}
-// grokmain.js - 使用 Supabase pgvector 版本
+// grokmain.cjs - 使用 Supabase pgvector 版本
 require('dotenv').config({ path: __dirname + '/.env' });
 
 const axios = require('axios');
