@@ -273,8 +273,9 @@ export async function POST(req) {
         // 3️⃣ 其他 → 呼叫 Groq LLM API（純 Node.js，不再用 Python）
         try {
           // 使用你原本 lib/grokmain.js 的 generateAnswer 函數
-          const answer = await generateAnswer(userText); 
-          const replyMessage = answer?.trim() || '目前沒有找到相關資訊，請查看社區公告。';
+          const answer = await generateAnswer(userText);
+          // 修正：確保 answer 一定是字串再呼叫 .trim()
+          const replyMessage = typeof answer === 'string' ? answer.trim() : '目前沒有找到相關資訊，請查看社區公告。';
           await client.replyMessage(replyToken, { type: 'text', text: replyMessage });
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
