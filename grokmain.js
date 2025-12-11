@@ -7,7 +7,7 @@ require('dotenv').config({ path: __dirname + '/.env' });
 
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
-const { spawnSync } = require('child_process');
+const { pipeline } = require('@xenova/transformers');
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama3-8b-8192';
@@ -16,15 +16,22 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// 生成 embedding 向量                             
-function getEmbedding(text) {              
+// 初始化 embedding 模型（第一次會下載模型）
+let embeddingModel = null;
+
+async function initEmbeddingModel() {
+  if (!embeddingModel) {
+    embeddingModel = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+  }
+  return embeddingModel;
+}
+
+// 生成 embedding 向量（使用 Transformers.js）
+async function getEmbedding(text) {
   try {
-    const py = spawnSync('python', [__dirname + '/embedding.py', text], { encoding: 'utf-8' });
-    if (py.error || py.status !== 0) {
-      console.error('embedding 生成失敗:', py.stderr);
-      return null;
-    }
-    return JSON.parse(py.stdout);
+    const model = await initEmbeddingModel();
+    const output = await model(text, { pooling: 'mean', normalize: true });
+    return Array.from(output.data);
   } catch (error) {
     console.error('Error getting embedding:', error);
     return null;
@@ -36,7 +43,7 @@ async function chat(query) {
   console.log(`\n[Query] 問題: ${query}`);
   
   // 1. 生成問題的 embedding
-  const queryEmbedding = getEmbedding(query);
+  const queryEmbedding = await getEmbedding(query);
   if (!queryEmbedding) {
     return { error: 'embedding 生成失敗' };
   }
@@ -149,7 +156,9 @@ async function chat(query) {
       }
     );
 
-    const answer = response.data.choices[0].message.content;
+    const answer = typeof response.data.choices[0].message.content === 'string'
+      ? response.data.choices[0].message.content
+      : '無法生成回答';
     console.log(`\n[Answer] 回答:\n${answer}\n`);
 
     return {
