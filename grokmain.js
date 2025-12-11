@@ -166,4 +166,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { chat };
+module.exports = { chat, generateAnswer: chat };
