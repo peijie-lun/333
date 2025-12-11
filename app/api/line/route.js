@@ -68,6 +68,8 @@ export async function POST(req) {
             line_display_name: profile.displayName || '',
             line_avatar_url: profile.pictureUrl || '',
             line_status_message: profile.statusMessage || '',
+            email: userId + '@line.local', // 預設 email
+            password: userId, // 預設密碼（可自行加密或亂數）
             updated_at: new Date().toISOString(),
           }
         ], { onConflict: 'line_user_id' });
