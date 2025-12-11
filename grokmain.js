@@ -28,7 +28,7 @@ function getEmbedding(text) {
 }
 
 // 主要聊天函數
-async functionchat(query) {
+async function chat(query) {
   console.log(`\n[Query] 問題: ${query}`);
   
   // 1. 生成問題的 embedding
