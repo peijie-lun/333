@@ -3,33 +3,38 @@ require('dotenv').config({ path: __dirname + '/.env' });
 
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
-const { pipeline } = require('@xenova/transformers');
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama3-8b-8192';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// 初始化 embedding 模型（第一次會下載模型）
-let embeddingModel = null;
-
-async function initEmbeddingModel() {
-  if (!embeddingModel) {
-    embeddingModel = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-  }
-  return embeddingModel;
-}
-
-// 生成 embedding 向量（使用 Transformers.js）
+// 生成 embedding 向量（使用 OpenAI API）
 async function getEmbedding(text) {
   try {
-    const model = await initEmbeddingModel();
-    const output = await model(text, { pooling: 'mean', normalize: true });
-    return Array.from(output.data);
+    if (!OPENAI_API_KEY) {
+      console.error('OPENAI_API_KEY 未設定');
+      return null;
+    }
+    const response = await axios.post(
+      'https://api.openai.com/v1/embeddings',
+      {
+        model: 'text-embedding-3-small',
+        input: text
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    return response.data.data[0].embedding;
   } catch (error) {
-    console.error('Error getting embedding:', error);
+    console.error('Error getting embedding:', error.response?.data || error.message);
     return null;
   }
 }
