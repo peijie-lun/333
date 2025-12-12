@@ -30,7 +30,7 @@ export async function POST(req: Request) {
       .from("profiles")
       .upsert({
         id: profileId,
-        line_user_id,
+        line_user_id: line_user_id,
         line_display_name: line_display_name || null,
         line_avatar_url: line_avatar_url || null,
         line_status_message: line_status_message || null,
