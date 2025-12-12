@@ -22,7 +22,21 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3️⃣ 更新指定 profile
+    // 3️⃣ 檢查此 LINE 帳號是否已被其他人綁定
+    const { data: existingBind } = await supabase
+      .from("profiles")
+      .select("id, email")
+      .eq("line_user_id", line_user_id)
+      .maybeSingle();
+
+    if (existingBind && existingBind.id !== profile_id) {
+      return NextResponse.json(
+        { success: false, message: "此 LINE 帳號已綁定其他帳戶" },
+        { status: 400 }
+      );
+    }
+
+    // 4️⃣ 更新指定 profile
     const { data, error } = await supabase
       .from("profiles")
       .update({
