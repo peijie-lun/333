@@ -85,6 +85,16 @@ export default function BindLinePage() {
       return;
     }
 
+    // 檢查 user.id 是否存在
+    if (!user.id) {
+      console.error("user.id 不存在，user:", user);
+      setStatus("使用者資料異常，請重新登入");
+      setUser(null); // 清空錯誤的 user 狀態
+      return;
+    }
+
+    console.log("準備綁定，user.id:", user.id);
+
     try {
       // 若 LINE 尚未登入，先登入 LINE
       if (!liffObject.isLoggedIn()) {
@@ -96,6 +106,8 @@ export default function BindLinePage() {
 
       const profileData = await liffObject.getProfile();
       setProfile(profileData);
+
+      console.log("準備發送綁定請求，profile_id:", user.id);
 
       const res = await fetch("/api/bind-line", {
         method: "POST",
@@ -110,6 +122,8 @@ export default function BindLinePage() {
       });
 
       const data = await res.json();
+      console.log("綁定 API 回應:", data);
+      
       if (data.success) {
         setStatus("LINE 已成功綁定！");
       } else {
