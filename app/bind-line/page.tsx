@@ -40,8 +40,19 @@ export default function BindLinePage() {
       });
       const data = await res.json();
       if (data.success) {
-        setUser(data.user);
-        setStatus("註冊成功，請綁定 LINE");
+        // 註冊成功自動登入
+        const loginRes = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const loginData = await loginRes.json();
+        if (loginData.success) {
+          setUser(loginData.user);
+          setStatus("註冊並登入成功，請綁定 LINE");
+        } else {
+          setStatus("註冊成功但自動登入失敗，請手動登入");
+        }
       } else {
         setStatus("註冊失敗：" + (data.message || "未知錯誤"));
       }
@@ -161,12 +172,15 @@ export default function BindLinePage() {
 
       {/* 綁定 LINE */}
       {user && !profile && (
-        <button
-          onClick={handleBindClick}
-          className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 active:scale-95"
-        >
-          使用 LINE 綁定帳號
-        </button>
+        <div className="flex flex-col items-center gap-4">
+          <p className="text-green-700 font-semibold">已登入，請點擊下方按鈕綁定 LINE</p>
+          <button
+            onClick={handleBindClick}
+            className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 active:scale-95"
+          >
+            使用 LINE 綁定帳號
+          </button>
+        </div>
       )}
 
       {/* 顯示 LINE Profile */}
@@ -178,6 +192,7 @@ export default function BindLinePage() {
             className="w-24 h-24 rounded-full"
           />
           <p className="mt-2 font-semibold">{profile.displayName}</p>
+          <p className="text-green-700 mt-2">LINE 綁定成功！</p>
         </div>
       )}
     </main>
