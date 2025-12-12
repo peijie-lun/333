@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
-import { cookies } from "next/headers";
+import { createClient } from "@supabase/supabase-js";
 
 // 注意：檔案副檔名必須是 .ts，並放在 app/api/bind-line/route.ts
 export async function POST(req: Request) {
   try {
-    // 1️⃣ 初始化 Supabase client（App Router 專用）
-    const supabase = createRouteHandlerClient({ cookies });
+    // 1️⃣ 初始化 Supabase client（API Route 專用）
+    const supabase = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!
+    );
 
     // 2️⃣ 解析前端傳來的資料
     const body = await req.json();
@@ -18,20 +20,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ message: "缺少 LINE userId" }, { status: 400 });
     }
 
-    // 3️⃣ 取得目前登入的 Supabase 使用者
-    const { data: userData, error: authError } = await supabase.auth.getUser();
-    console.log("Supabase auth.getUser() 回傳:", userData, authError);
-
-    const user = userData?.user;
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { message: "使用者未登入", error: authError?.message || "user 為 null" },
-        { status: 401 }
-      );
-    }
-
-    const profileId = user.id;
+    // 3️⃣ 取得 profileId（這裡假設 line_user_id 為唯一識別，或可根據需求調整）
+    const profileId = line_user_id;
 
     // 4️⃣ Upsert 資料到 profiles
     console.log("準備 upsert profiles，profileId:", profileId);
