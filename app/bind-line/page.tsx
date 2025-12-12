@@ -6,30 +6,10 @@ export default function BindLinePage() {
   const [liffObject, setLiffObject] = useState<any>(null);
   const [status, setStatus] = useState("載入中...");
   const [profile, setProfile] = useState<any>(null);
-  const [user, setUserState] = useState<any>(null); // 登入後的使用者
+  const [user, setUser] = useState<any>(null); // 登入後的使用者
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const LIFF_ID = "2008678437-qt2KwvhO"; // ← 你的 LIFF ID
-
-  // user 狀態持久化
-  const setUser = (u: any) => {
-    setUserState(u);
-    if (u) {
-      localStorage.setItem("bindline_user", JSON.stringify(u));
-    } else {
-      localStorage.removeItem("bindline_user");
-    }
-  };
-
-  // 初始化時自動恢復 user 狀態
-  useEffect(() => {
-    const saved = localStorage.getItem("bindline_user");
-    if (saved) {
-      try {
-        setUserState(JSON.parse(saved));
-      } catch {}
-    }
-  }, []);
 
   useEffect(() => {
     const initLiff = async () => {
@@ -192,7 +172,7 @@ export default function BindLinePage() {
           </button>
         </div>
       )}
-                                           
+
       {/* 顯示 LINE Profile */}
       {profile && (
         <div className="flex flex-col items-center mt-4">
