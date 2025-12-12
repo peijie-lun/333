@@ -37,6 +37,7 @@ export async function POST(req: Request) {
     }
 
     // 4️⃣ 更新指定 profile
+    console.log("開始更新 profile，profile_id:", profile_id);
     const { data, error } = await supabase
       .from("profiles")
       .update({
@@ -48,6 +49,8 @@ export async function POST(req: Request) {
       })
       .eq("id", profile_id)
       .select();
+
+    console.log("更新結果 - data:", data, "error:", error);
 
     if (error) {
       console.error("資料庫更新失敗:", error);
@@ -65,6 +68,7 @@ export async function POST(req: Request) {
       );
     }
 
+    console.log("✅ 綁定成功，更新後的 profile:", data[0]);
     return NextResponse.json({
       success: true,
       message: "LINE 已成功綁定！",
