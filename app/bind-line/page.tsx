@@ -52,6 +52,50 @@ export default function BindLinePage() {
     initLiff();
   }, []);
 
+  // LIFF 登入完成後自動綁定
+  useEffect(() => {
+    const autoBind = async () => {
+      if (!liffObject || !user || profile) return;
+      if (!liffObject.isLoggedIn()) return;
+
+      console.log("偵測到 LIFF 已登入且 user 存在，自動執行綁定");
+      setStatus("綁定中...");
+
+      try {
+        const profileData = await liffObject.getProfile();
+        setProfile(profileData);
+
+        console.log("準備發送綁定請求，profile_id:", user.id);
+
+        const res = await fetch("/api/bind-line", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            profile_id: user.id,
+            line_user_id: profileData.userId,
+            line_display_name: profileData.displayName,
+            line_avatar_url: profileData.pictureUrl,
+            line_status_message: profileData.statusMessage,
+          }),
+        });
+
+        const data = await res.json();
+        console.log("綁定 API 回應:", data);
+
+        if (data.success) {
+          setStatus("LINE 已成功綁定！");
+        } else {
+          setStatus("綁定失敗：" + (data.message || "未知錯誤"));
+        }
+      } catch (err) {
+        console.error("自動綁定失敗:", err);
+        setStatus("綁定發生錯誤，請稍後再試");
+      }
+    };
+
+    autoBind();
+  }, [liffObject, user, profile]);
+
   // 註冊
   const handleRegister = async () => {
     if (!email || !password) {
