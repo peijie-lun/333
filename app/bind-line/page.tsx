@@ -41,7 +41,7 @@ export default function BindLinePage() {
         line_user_id: profile.userId,
         line_display_name: profile.displayName,
         line_avatar_url: profile.pictureUrl,
-        line_status_message: profile.statusMessage,
+        line_status_message: profile.statusMessage,        
       }),
     });
 
