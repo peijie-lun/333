@@ -1,13 +1,14 @@
-  // 頁面初始化時自動還原 user 狀態
-  useEffect(() => {
-    const savedUser = localStorage.getItem("user");
-    if (savedUser) setUser(JSON.parse(savedUser));
-  }, []);
+
 "use client";
 
 import { useEffect, useState, useRef } from "react";
 
 export default function BindLinePage() {
+  // 頁面初始化時自動還原 user 狀態
+  useEffect(() => {
+    const savedUser = localStorage.getItem("user");
+    if (savedUser) setUser(JSON.parse(savedUser));
+  }, []);
   const [liffObject, setLiffObject] = useState<any>(null);
   const [status, setStatus] = useState("載入中...");
   const [profile, setProfile] = useState<any>(null);
