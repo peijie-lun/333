@@ -33,8 +33,7 @@ export async function POST(req: Request) {
         updated_at: new Date(),
       })
       .eq("id", profile_id)
-      .select()
-      .single(); // 回傳更新後資料
+      .select();
 
     if (error) {
       console.error("資料庫更新失敗:", error);
@@ -44,10 +43,18 @@ export async function POST(req: Request) {
       );
     }
 
+    if (!data || data.length === 0) {
+      console.error("找不到 profile_id:", profile_id);
+      return NextResponse.json(
+        { success: false, message: "找不到使用者資料，請確認是否已註冊" },
+        { status: 404 }
+      );
+    }
+
     return NextResponse.json({
       success: true,
       message: "LINE 已成功綁定！",
-      profile: data,
+      profile: data[0],
     });
   } catch (err: any) {
     console.error("伺服器錯誤:", err);
