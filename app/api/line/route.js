@@ -61,17 +61,18 @@ export async function POST(req) {
 
       // follow 事件或 profile 變動才 upsert
       if (event.type === 'follow' || profileChanged) {
+        const upsertProfile = {
+          line_user_id: userId,
+          line_display_name: profile.displayName || '',
+          line_avatar_url: profile.pictureUrl || '',
+          line_status_message: profile.statusMessage || '',
+          email: userId + '@line.local', // 預設 email
+          password: userId, // 預設密碼（可自行加密或亂數）
+          updated_at: new Date().toISOString(),
+        };
+        if (existingProfile?.id) upsertProfile.id = existingProfile.id;
         const { error: upsertError } = await supabase.from('profiles').upsert([
-          {
-            id: existingProfile?.id || null,
-            line_user_id: userId,
-            line_display_name: profile.displayName || '',
-            line_avatar_url: profile.pictureUrl || '',
-            line_status_message: profile.statusMessage || '',
-            email: userId + '@line.local', // 預設 email
-            password: userId, // 預設密碼（可自行加密或亂數）
-            updated_at: new Date().toISOString(),
-          }
+          upsertProfile
         ], { onConflict: 'line_user_id' });
 
         if (upsertError) console.error('❌ Supabase upsert 錯誤:', upsertError);
