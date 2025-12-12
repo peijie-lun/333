@@ -41,18 +41,8 @@ export default function BindLinePage() {
       const data = await res.json();
       if (data.success) {
         // 註冊成功自動登入
-        const loginRes = await fetch("/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password }),
-        });
-        const loginData = await loginRes.json();
-        if (loginData.success) {
-          setUser(loginData.user);
-          setStatus("註冊並登入成功，請綁定 LINE");
-        } else {
-          setStatus("註冊成功但自動登入失敗，請手動登入");
-        }
+        setUser(data.user);
+        setStatus("註冊成功，請點擊下方綁定 LINE");
       } else {
         setStatus("註冊失敗：" + (data.message || "未知錯誤"));
       }
@@ -77,7 +67,7 @@ export default function BindLinePage() {
       const data = await res.json();
       if (data.success) {
         setUser(data.user);
-        setStatus("登入成功，請綁定 LINE");
+        setStatus("登入成功，請點擊下方綁定 LINE");
       } else {
         setStatus("登入失敗：" + (data.message || "未知錯誤"));
       }
@@ -96,7 +86,7 @@ export default function BindLinePage() {
     }
 
     try {
-      // LINE 登入
+      // 若 LINE 尚未登入，先登入 LINE
       if (!liffObject.isLoggedIn()) {
         liffObject.login();
         return;
