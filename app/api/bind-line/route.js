@@ -6,33 +6,34 @@ export async function POST(req) {
   try {
     const supabase = createRouteHandlerClient({ cookies });
 
-    // 1️⃣ 解析前端傳來的資料
+    // 1️⃣ 解析前端資料
     const body = await req.json();
     const { userId, displayName, pictureUrl, statusMessage } = body;
 
+    console.log("收到前端資料:", body);
+
     if (!userId) {
-      return NextResponse.json(
-        { message: "缺少 LINE userId" },
-        { status: 400 }
-      );
+      return NextResponse.json({ message: "缺少 LINE userId" }, { status: 400 });
     }
 
-    // 2️⃣ 從 Supabase Auth 取得目前登入使用者
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
+    // 2️⃣ 取得 Supabase Auth 使用者
+    const { data: userData, error: authError } = await supabase.auth.getUser();
+    console.log("Supabase auth.getUser() 回傳:", userData, authError);
+
+    const user = userData?.user;
 
     if (authError || !user) {
       return NextResponse.json(
-        { message: "使用者未登入", error: authError?.message },
+        { message: "使用者未登入", error: authError?.message || "user 為 null" },
         { status: 401 }
       );
     }
 
-    const profileId = user.id; // Supabase auth UUID
+    const profileId = user.id;
 
-    // 3️⃣ Upsert 資料到 profiles
+    // 3️⃣ Upsert 到 profiles
+    console.log("準備 upsert profiles，profileId:", profileId);
+
     const { data, error } = await supabase
       .from("profiles")
       .upsert({
@@ -43,10 +44,11 @@ export async function POST(req) {
         line_status_message: statusMessage || null,
         updated_at: new Date(),
       })
-      .select(); // 回傳更新後資料
+      .select();
+
+    console.log("upsert 結果:", { data, error });
 
     if (error) {
-      console.error("資料庫更新失敗:", error);
       return NextResponse.json(
         { message: "資料庫更新失敗", error: error.message },
         { status: 500 }
@@ -56,7 +58,7 @@ export async function POST(req) {
     return NextResponse.json({
       success: true,
       message: "LINE 已成功綁定！",
-      profile: data[0], // 回傳最新資料
+      profile: data[0],
     });
   } catch (err) {
     console.error("伺服器錯誤:", err);
