@@ -172,7 +172,7 @@ export default function BindLinePage() {
           </button>
         </div>
       )}
-
+                                           
       {/* 顯示 LINE Profile */}
       {profile && (
         <div className="flex flex-col items-center mt-4">
