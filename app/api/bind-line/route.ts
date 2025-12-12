@@ -20,22 +20,34 @@ export async function POST(req: Request) {
       return NextResponse.json({ message: "缺少 LINE userId" }, { status: 400 });
     }
 
-    // 3️⃣ 取得 profileId（這裡假設 line_user_id 為唯一識別，或可根據需求調整）
-    const profileId = line_user_id;
+    // 3️⃣ 先查詢是否已存在該 line_user_id 的 profile
+    const { data: existingProfile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("line_user_id", line_user_id)
+      .maybeSingle();
+
+    console.log("現有 profile:", existingProfile);
 
     // 4️⃣ Upsert 資料到 profiles
-    console.log("準備 upsert profiles，profileId:", profileId);
+    const upsertData: any = {
+      line_user_id: line_user_id,
+      line_display_name: line_display_name || null,
+      line_avatar_url: line_avatar_url || null,
+      line_status_message: line_status_message || null,
+      updated_at: new Date(),
+    };
+
+    // 只有在已存在時才加入 id
+    if (existingProfile?.id) {
+      upsertData.id = existingProfile.id;
+    }
+
+    console.log("準備 upsert profiles，資料:", upsertData);
 
     const { data, error } = await supabase
       .from("profiles")
-      .upsert({
-        id: profileId,
-        line_user_id: line_user_id,
-        line_display_name: line_display_name || null,
-        line_avatar_url: line_avatar_url || null,
-        line_status_message: line_status_message || null,
-        updated_at: new Date(),
-      })
+      .upsert(upsertData, { onConflict: 'line_user_id' })
       .select();
 
     console.log("upsert 結果:", { data, error });
