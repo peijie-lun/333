@@ -78,6 +78,14 @@ export default function BindLinePage() {
     }
   };
 
+  // 登出
+  const handleLogout = () => {
+    setUser(null);
+    setProfile(null);
+    setStatus("已登出，請重新登入或註冊");
+    console.log("已清除 localStorage");
+  };
+
   // 登入
   const handleLogin = async () => {
     if (!email || !password) {
@@ -210,6 +218,12 @@ export default function BindLinePage() {
           >
             使用 LINE 綁定帳號
           </button>
+          <button
+            onClick={handleLogout}
+            className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+          >
+            登出
+          </button>
         </div>
       )}
 
@@ -223,6 +237,12 @@ export default function BindLinePage() {
           />
           <p className="mt-2 font-semibold">{profile.displayName}</p>
           <p className="text-green-700 mt-2">LINE 綁定成功！</p>
+          <button
+            onClick={handleLogout}
+            className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+          >
+            登出
+          </button>
         </div>
       )}
     </main>
