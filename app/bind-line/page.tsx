@@ -13,22 +13,25 @@ export default function BindLinePage() {
 
   useEffect(() => {
     const initLiff = async () => {
-      const liff = (await import("@line/liff")).default;
       try {
+        const liff = (await import("@line/liff")).default;
         await liff.init({ liffId: LIFF_ID });
         setLiffObject(liff);
         setStatus("請先登入或註冊帳號，再綁定 LINE");
       } catch (err) {
-        console.error("LIFF init failed", err);
+        console.error("LIFF 初始化失敗", err);
         setStatus("LIFF 初始化失敗，請稍後再試");
       }
     };
-
     initLiff();
   }, []);
 
   // 註冊
   const handleRegister = async () => {
+    if (!email || !password) {
+      setStatus("請輸入 Email 和密碼");
+      return;
+    }
     try {
       const res = await fetch("/api/auth/register", {
         method: "POST",
@@ -50,6 +53,10 @@ export default function BindLinePage() {
 
   // 登入
   const handleLogin = async () => {
+    if (!email || !password) {
+      setStatus("請輸入 Email 和密碼");
+      return;
+    }
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
@@ -78,6 +85,7 @@ export default function BindLinePage() {
     }
 
     try {
+      // LINE 登入
       if (!liffObject.isLoggedIn()) {
         liffObject.login();
         return;
@@ -92,7 +100,7 @@ export default function BindLinePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          profile_id: user.id, // 將使用者 id 傳給後端
+          profile_id: user.id, // 使用者註冊的 id
           line_user_id: profileData.userId,
           line_display_name: profileData.displayName,
           line_avatar_url: profileData.pictureUrl,
@@ -101,7 +109,6 @@ export default function BindLinePage() {
       });
 
       const data = await res.json();
-
       if (data.success) {
         setStatus("LINE 已成功綁定！");
       } else {
@@ -118,6 +125,7 @@ export default function BindLinePage() {
       <h1 className="text-2xl font-bold">註冊 / 登入 + 綁定 LINE</h1>
       <p className="text-gray-700">{status}</p>
 
+      {/* 註冊 / 登入表單 */}
       {!user && (
         <div className="flex flex-col gap-4 w-80">
           <input
@@ -151,6 +159,7 @@ export default function BindLinePage() {
         </div>
       )}
 
+      {/* 綁定 LINE */}
       {user && !profile && (
         <button
           onClick={handleBindClick}
@@ -160,6 +169,7 @@ export default function BindLinePage() {
         </button>
       )}
 
+      {/* 顯示 LINE Profile */}
       {profile && (
         <div className="flex flex-col items-center mt-4">
           <img
