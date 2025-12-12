@@ -1,0 +1,67 @@
+import { NextResponse } from "next/server";
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { cookies } from "next/headers";
+
+export async function POST(req) {
+  try {
+    const supabase = createRouteHandlerClient({ cookies });
+
+    // 1. 解析前端傳來的資料
+    const body = await req.json();
+    const { userId, displayName, pictureUrl, statusMessage } = body;
+
+    if (!userId) {
+      return NextResponse.json(
+        { message: "缺少 LINE userId" },
+        { status: 400 }
+      );
+    }
+
+    // 2. 從 Supabase Auth 取得目前登入用戶
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json(
+        { message: "使用者未登入" },
+        { status: 401 }
+      );
+    }
+
+    const profileId = user.id; // Supabase auth UUID = profile.id
+
+    // 3. 更新 profiles 表
+    const { error } = await supabase
+      .from("profiles")
+      .update({
+        line_user_id: userId,
+        line_display_name: displayName || null,
+        line_avatar_url: pictureUrl || null,
+        line_status_message: statusMessage || null,
+        updated_at: new Date(),
+      })
+      .eq("id", profileId);
+
+    if (error) {
+      console.error(error);
+      return NextResponse.json(
+        { message: "資料庫更新失敗", error: error.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "LINE 已成功綁定！",
+    });
+
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      { message: "伺服器錯誤", error: err.message },
+      { status: 500 }
+    );
+  }
+}
+// 4. 回傳成功訊息
