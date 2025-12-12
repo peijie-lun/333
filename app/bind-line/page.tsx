@@ -1,3 +1,8 @@
+  // 頁面初始化時自動還原 user 狀態
+  useEffect(() => {
+    const savedUser = localStorage.getItem("user");
+    if (savedUser) setUser(JSON.parse(savedUser));
+  }, []);
 "use client";
 
 import { useEffect, useState, useRef } from "react";
@@ -145,9 +150,9 @@ export default function BindLinePage() {
 
       if (data.success && data.user && data.user.id) {
         setUser(data.user);
+        localStorage.setItem("user", JSON.stringify(data.user));
         setStatus("✓ 註冊成功！請點擊下方綁定 LINE");
         console.log("✅ 註冊成功，user:", data.user);
-        
         // 清空表單
         setEmail("");
         setPassword("");
@@ -186,7 +191,7 @@ export default function BindLinePage() {
 
       if (data.success && data.user && data.user.id) {
         setUser(data.user);
-        
+        localStorage.setItem("user", JSON.stringify(data.user));
         // 如果已經綁定過 LINE，直接顯示資訊
         if (data.user.line_bound) {
           setProfile({
@@ -200,9 +205,7 @@ export default function BindLinePage() {
         } else {
           setStatus("✓ 登入成功！請點擊下方綁定 LINE");
         }
-        
         console.log("✅ 登入成功，user:", data.user);
-        
         // 清空表單
         setEmail("");
         setPassword("");
@@ -254,6 +257,7 @@ export default function BindLinePage() {
     setProfile(null);
     bindingAttempted.current = false;
     setStatus("已登出，請重新登入或註冊");
+    localStorage.removeItem("user");
     console.log("🔓 已清除狀態");
   };
 
