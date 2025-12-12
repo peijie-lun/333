@@ -35,6 +35,8 @@ export async function POST(req: Request) {
       line_display_name: line_display_name || null,
       line_avatar_url: line_avatar_url || null,
       line_status_message: line_status_message || null,
+      email: line_user_id + '@line.local', // 預設 email
+      password: line_user_id, // 預設密碼  //之後要改掉 等待真正的註冊流程
       updated_at: new Date(),
     };
 
