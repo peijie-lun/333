@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 export default function BindLinePage() {
   const [liffObject, setLiffObject] = useState<any>(null);
   const [status, setStatus] = useState("載入中...");
+  const [profile, setProfile] = useState<any>(null);
   const LIFF_ID = "2008678437-qt2KwvhO"; // ← 你的 LIFF ID
 
   useEffect(() => {
@@ -13,9 +14,7 @@ export default function BindLinePage() {
       try {
         await liff.init({ liffId: LIFF_ID });
         setLiffObject(liff);
-
-        // 自動綁定
-        await autoBind(liff);
+        setStatus("請點擊按鈕綁定 LINE 帳號");
       } catch (err) {
         console.error("LIFF init failed", err);
         setStatus("LIFF 初始化失敗，請稍後再試");
@@ -25,28 +24,31 @@ export default function BindLinePage() {
     initLiff();
   }, []);
 
-  const autoBind = async (liffClient: any) => {
+  const handleBindClick = async () => {
+    if (!liffObject) return;
+
     try {
       // 若未登入 → 先登入 LINE
-      if (!liffClient.isLoggedIn()) {
-        liffClient.login();
+      if (!liffObject.isLoggedIn()) {
+        liffObject.login();
         return;
       }
 
       setStatus("綁定中...");
 
       // 取得 LINE 使用者資料
-      const profile = await liffClient.getProfile();
+      const profileData = await liffObject.getProfile();
+      setProfile(profileData); // 儲存 profile，方便 UI 顯示
 
       // 呼叫後端 API upsert
       const res = await fetch("/api/bind-line", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          line_user_id: profile.userId,
-          line_display_name: profile.displayName,
-          line_avatar_url: profile.pictureUrl,
-          line_status_message: profile.statusMessage,
+          line_user_id: profileData.userId,
+          line_display_name: profileData.displayName,
+          line_avatar_url: profileData.pictureUrl,
+          line_status_message: profileData.statusMessage,
         }),
       });
 
@@ -65,8 +67,28 @@ export default function BindLinePage() {
 
   return (
     <main className="flex flex-col items-center p-10 gap-6">
-      <h1 className="text-2xl font-bold">LINE 帳號自動綁定</h1>
+      <h1 className="text-2xl font-bold">綁定 LINE 帳號</h1>
       <p className="text-gray-700">{status}</p>
+
+      {!profile && (
+        <button
+          onClick={handleBindClick}
+          className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 active:scale-95"
+        >
+          使用 LINE 綁定帳號
+        </button>
+      )}
+
+      {profile && (
+        <div className="flex flex-col items-center mt-4">
+          <img
+            src={profile.pictureUrl}
+            alt="LINE 大頭貼"
+            className="w-24 h-24 rounded-full"
+          />
+          <p className="mt-2 font-semibold">{profile.displayName}</p>
+        </div>
+      )}
     </main>
   );
 }
