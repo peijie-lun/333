@@ -1,42 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 export default function BindLinePage() {
   const [liffObject, setLiffObject] = useState<any>(null);
   const [status, setStatus] = useState("載入中...");
   const [profile, setProfile] = useState<any>(null);
-  const [userState, setUserState] = useState<any>(null); // 登入後的使用者
+  const [user, setUser] = useState<any>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const LIFF_ID = "2008678437-qt2KwvhO"; // ← 你的 LIFF ID
+  const [isBinding, setIsBinding] = useState(false); // 防止重複綁定
+  const bindingAttempted = useRef(false); // 追蹤是否已嘗試綁定
+  
+  const LIFF_ID = "2008678437-qt2KwvhO";
 
-  // user 狀態持久化
-  const setUser = (u: any) => {
-    setUserState(u);
-    if (u) {
-      localStorage.setItem("bindline_user", JSON.stringify(u));
-    } else {
-      localStorage.removeItem("bindline_user");
-    }
-  };
-
-  const user = userState;
-
-  // 初始化時自動恢復 user 狀態
-  useEffect(() => {
-    const saved = localStorage.getItem("bindline_user");
-    if (saved) {
-      try {
-        const savedUser = JSON.parse(saved);
-        setUserState(savedUser);
-        console.log("從 localStorage 恢復 user:", savedUser);
-      } catch (e) {
-        console.error("恢復 user 失敗", e);
-      }
-    }
-  }, []);
-
+  // 初始化 LIFF
   useEffect(() => {
     const initLiff = async () => {
       try {
@@ -52,49 +30,72 @@ export default function BindLinePage() {
     initLiff();
   }, []);
 
-  // LIFF 登入完成後自動綁定
-  useEffect(() => {
-    const autoBind = async () => {
-      if (!liffObject || !user || profile) return;
-      if (!liffObject.isLoggedIn()) return;
+  // 統一的綁定邏輯
+  const performBinding = async () => {
+    if (!liffObject || !user || isBinding || profile) {
+      return;
+    }
 
-      console.log("偵測到 LIFF 已登入且 user 存在，自動執行綁定");
-      setStatus("綁定中...");
+    // 檢查 user.id
+    if (!user.id) {
+      console.error("user.id 不存在，user:", user);
+      setStatus("使用者資料異常，請重新登入");
+      setUser(null);
+      return;
+    }
 
-      try {
-        const profileData = await liffObject.getProfile();
-        setProfile(profileData);
+    // 檢查 LINE 登入狀態
+    if (!liffObject.isLoggedIn()) {
+      console.log("需要 LINE 登入");
+      return;
+    }
 
-        console.log("準備發送綁定請求，profile_id:", user.id);
+    setIsBinding(true);
+    setStatus("綁定中...");
+    console.log("開始綁定流程，profile_id:", user.id);
 
-        const res = await fetch("/api/bind-line", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            profile_id: user.id,
-            line_user_id: profileData.userId,
-            line_display_name: profileData.displayName,
-            line_avatar_url: profileData.pictureUrl,
-            line_status_message: profileData.statusMessage,
-          }),
-        });
+    try {
+      const profileData = await liffObject.getProfile();
+      setProfile(profileData);
 
-        const data = await res.json();
-        console.log("綁定 API 回應:", data);
+      const res = await fetch("/api/bind-line", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile_id: user.id,
+          line_user_id: profileData.userId,
+          line_display_name: profileData.displayName,
+          line_avatar_url: profileData.pictureUrl,
+          line_status_message: profileData.statusMessage,
+        }),
+      });
 
-        if (data.success) {
-          setStatus("LINE 已成功綁定！");
-        } else {
-          setStatus("綁定失敗：" + (data.message || "未知錯誤"));
-        }
-      } catch (err) {
-        console.error("自動綁定失敗:", err);
-        setStatus("綁定發生錯誤，請稍後再試");
+      const data = await res.json();
+      console.log("綁定 API 回應:", data);
+
+      if (data.success) {
+        setStatus("LINE 已成功綁定！");
+        bindingAttempted.current = true;
+      } else {
+        setStatus("綁定失敗：" + (data.message || "未知錯誤"));
+        setProfile(null); // 失敗時清除 profile
       }
-    };
+    } catch (err) {
+      console.error("綁定失敗:", err);
+      setStatus("綁定發生錯誤，請稍後再試");
+      setProfile(null);
+    } finally {
+      setIsBinding(false);
+    }
+  };
 
-    autoBind();
-  }, [liffObject, user, profile]);
+  // 自動綁定 (LIFF 登入後)
+  useEffect(() => {
+    if (liffObject && user && liffObject.isLoggedIn() && !bindingAttempted.current) {
+      console.log("偵測到 LIFF 已登入且 user 存在，自動執行綁定");
+      performBinding();
+    }
+  }, [liffObject, user]);
 
   // 註冊
   const handleRegister = async () => {
@@ -109,10 +110,11 @@ export default function BindLinePage() {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
-      if (data.success) {
-        // 註冊成功自動登入
+      
+      if (data.success && data.user && data.user.id) {
         setUser(data.user);
-        setStatus("註冊成功，請點擊下方綁定 LINE");
+        setStatus("註冊成功！請點擊下方綁定 LINE");
+        console.log("註冊成功，user:", data.user);
       } else {
         setStatus("註冊失敗：" + (data.message || "未知錯誤"));
       }
@@ -120,14 +122,6 @@ export default function BindLinePage() {
       console.error(err);
       setStatus("註冊發生錯誤");
     }
-  };
-
-  // 登出
-  const handleLogout = () => {
-    setUser(null);
-    setProfile(null);
-    setStatus("已登出，請重新登入或註冊");
-    console.log("已清除 localStorage");
   };
 
   // 登入
@@ -143,9 +137,11 @@ export default function BindLinePage() {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
-      if (data.success) {
+      
+      if (data.success && data.user && data.user.id) {
         setUser(data.user);
-        setStatus("登入成功，請點擊下方綁定 LINE");
+        setStatus("登入成功！請點擊下方綁定 LINE");
+        console.log("登入成功，user:", data.user);
       } else {
         setStatus("登入失敗：" + (data.message || "未知錯誤"));
       }
@@ -155,62 +151,43 @@ export default function BindLinePage() {
     }
   };
 
-  // 綁定 LINE
+  // 手動觸發綁定
   const handleBindClick = async () => {
-    if (!liffObject) return;
+    if (!liffObject) {
+      setStatus("LIFF 尚未初始化");
+      return;
+    }
+    
     if (!user) {
       setStatus("請先登入或註冊帳號");
       return;
     }
 
-    // 檢查 user.id 是否存在
     if (!user.id) {
       console.error("user.id 不存在，user:", user);
       setStatus("使用者資料異常，請重新登入");
-      setUser(null); // 清空錯誤的 user 狀態
+      setUser(null);
       return;
     }
 
-    console.log("準備綁定，user.id:", user.id);
-
-    try {
-      // 若 LINE 尚未登入，先登入 LINE
-      if (!liffObject.isLoggedIn()) {
-        liffObject.login();
-        return;
-      }
-
-      setStatus("綁定中...");
-
-      const profileData = await liffObject.getProfile();
-      setProfile(profileData);
-
-      console.log("準備發送綁定請求，profile_id:", user.id);
-
-      const res = await fetch("/api/bind-line", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          profile_id: user.id, // 使用者註冊的 id
-          line_user_id: profileData.userId,
-          line_display_name: profileData.displayName,
-          line_avatar_url: profileData.pictureUrl,
-          line_status_message: profileData.statusMessage,
-        }),
-      });
-
-      const data = await res.json();
-      console.log("綁定 API 回應:", data);
-      
-      if (data.success) {
-        setStatus("LINE 已成功綁定！");
-      } else {
-        setStatus("綁定失敗：" + (data.message || "未知錯誤"));
-      }
-    } catch (err) {
-      console.error(err);
-      setStatus("綁定發生錯誤，請稍後再試");
+    // 若 LINE 尚未登入，導向 LINE 登入
+    if (!liffObject.isLoggedIn()) {
+      console.log("導向 LINE 登入");
+      liffObject.login();
+      return;
     }
+
+    // 執行綁定
+    await performBinding();
+  };
+
+  // 登出
+  const handleLogout = () => {
+    setUser(null);
+    setProfile(null);
+    bindingAttempted.current = false;
+    setStatus("已登出，請重新登入或註冊");
+    console.log("已清除狀態");
   };
 
   return (
@@ -255,12 +232,15 @@ export default function BindLinePage() {
       {/* 綁定 LINE */}
       {user && !profile && (
         <div className="flex flex-col items-center gap-4">
-          <p className="text-green-700 font-semibold">已登入，請點擊下方按鈕綁定 LINE</p>
+          <p className="text-green-700 font-semibold">
+            已登入為: {user.email || user.id}
+          </p>
           <button
             onClick={handleBindClick}
-            className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 active:scale-95"
+            disabled={isBinding}
+            className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 active:scale-95 disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
-            使用 LINE 綁定帳號
+            {isBinding ? "綁定中..." : "使用 LINE 綁定帳號"}
           </button>
           <button
             onClick={handleLogout}
@@ -280,7 +260,8 @@ export default function BindLinePage() {
             className="w-24 h-24 rounded-full"
           />
           <p className="mt-2 font-semibold">{profile.displayName}</p>
-          <p className="text-green-700 mt-2">LINE 綁定成功！</p>
+          <p className="text-sm text-gray-500">{profile.statusMessage}</p>
+          <p className="text-green-700 mt-2 font-semibold">✓ LINE 綁定成功！</p>
           <button
             onClick={handleLogout}
             className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
