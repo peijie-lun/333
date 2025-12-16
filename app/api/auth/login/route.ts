@@ -1,6 +1,5 @@
 // app/api/auth/login/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import bcrypt from 'bcryptjs';
 import { createClient } from '@supabase/supabase-js';
 
 export async function POST(req: NextRequest) {
@@ -58,10 +57,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 驗證密碼
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-
-    if (!isPasswordValid) {
+    // 驗證密碼（明文比對）
+    if (user.password !== password) {
       return NextResponse.json(
         { success: false, message: 'Email 或密碼錯誤' },
         { status: 401 }

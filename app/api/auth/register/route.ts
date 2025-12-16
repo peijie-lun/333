@@ -1,6 +1,5 @@
 // app/api/auth/register/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import bcrypt from 'bcryptjs';
 import { createClient } from '@supabase/supabase-js';
 
 export async function POST(req: NextRequest) {
@@ -52,17 +51,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 加密密碼
-    const saltRounds = 10;
-    const passwordHash = await bcrypt.hash(password, saltRounds);
-
-    // 插入新使用者
+    // 插入新使用者（明文密碼）
     const { data: newUser, error: insertError } = await supabase
       .from('profiles')
       .insert([
         {
           email,
-          password: passwordHash,
+          password: password,
           name: name || null,
           phone: phone || null,
           role: 'resident',
