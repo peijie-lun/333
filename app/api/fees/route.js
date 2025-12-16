@@ -57,7 +57,39 @@ export async function POST(req) {
     }
 
     // --- 2. LINE 推播 ---
-    const lineUserId = 'U5dbd8b5fb153630885b656bb5f8ae011'; // 之後可改成動態
+    // 先從 units 表中查詢 unit_id
+    const { data: unitData, error: unitError } = await supabase
+      .from('units')
+      .select('id')
+      .eq('room_number', room) // 使用 room_number 作為查詢條件
+      .single();
+
+    if (unitError || !unitData) {
+      console.error('查詢 units 表失敗:', unitError);
+      return NextResponse.json(
+        { error: '查詢單位資料失敗，無法推播 LINE 訊息' },
+        { status: 500 }
+      );
+    }
+
+    const unitId = unitData.id;
+
+    // 再用 unit_id 查詢 profiles 表
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('line_user_id')
+      .eq('unit_id', unitId)
+      .single();
+
+    if (profileError || !profile) {
+      console.error('查詢 profiles 表失敗:', profileError);
+      return NextResponse.json(
+        { error: '查詢住戶資料失敗，無法推播 LINE 訊息' },
+        { status: 500 }
+      );
+    }
+
+    const lineUserId = profile.line_user_id; // 使用查詢到的 line_user_id
 
     const pushBody = {
       to: lineUserId,
@@ -108,4 +140,3 @@ export async function GET() {
     { status: 405 }
   );
 }
- 

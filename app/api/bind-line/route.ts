@@ -26,11 +26,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // 在接收請求時增加詳細日誌
     console.log('📥 收到 LINE 綁定請求:', {
       profile_id,
       line_user_id,
       line_display_name
     });
+    console.log('📥 綁定請求參數:', { profile_id, line_user_id, line_display_name, line_avatar_url, line_status_message });
 
     // 1. 檢查 profile_id 是否存在
     const { data: currentProfile, error: profileError } = await supabase
@@ -39,8 +41,9 @@ export async function POST(req: NextRequest) {
       .eq('id', profile_id)
       .single();
 
+    // 在查詢 profiles 表時增加錯誤日誌
     if (profileError || !currentProfile) {
-      console.error('❌ 使用者不存在:', profile_id);
+      console.error('❌ 查詢 profiles 表失敗:', { profile_id, error: profileError });
       return NextResponse.json(
         { success: false, message: '使用者不存在' },
         { status: 404 }
