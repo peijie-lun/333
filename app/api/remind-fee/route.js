@@ -24,66 +24,74 @@ export async function POST(req) {
       return NextResponse.json({ error: '缺少 LINE_CHANNEL_ACCESS_TOKEN 環境變數' }, { status: 500 })
     }
 
-    // 1) 取帳單（注意：使用 due 欄位）
+    // 1) 查詢 fees 表
     const { data: fee, error: feeErr } = await supabase
       .from('fees')
-      .select('id, room, amount, due, paid, note')
+      .select('id, unit_id, amount, due, paid, note')
       .eq('id', feeId)
       .single()
 
     if (feeErr || !fee) {
+      console.error('查詢 fees 表失敗:', feeErr)
       return NextResponse.json({ error: 'Fee not found' }, { status: 404 })
     }
 
-    // 2) 依房號查 profiles（你已具備 room/name/line_user_id）
+    // 檢查是否已繳費
+    if (fee.paid) {
+      console.log('該費用已繳清，僅執行推播通知')
+    } else {
+      console.log('費用未繳，準備進行催繳通知')
+    }
+
+    // 2) 查詢 profiles 表
     const { data: profile, error: pErr } = await supabase
       .from('profiles')
-      .select('id, name, room, line_user_id')
-      .eq('room', fee.room)
-      .limit(1)
+      .select('id, name, unit_id, line_user_id')
+      .eq('unit_id', fee.unit_id)
       .maybeSingle()
 
     if (pErr) {
-      return NextResponse.json({ error: '查詢 profiles 失敗', detail: pErr.message }, { status: 500 })
-    }
-    if (!profile?.id) {
-      return NextResponse.json({ error: `未找到房號 ${fee.room} 的住戶（profiles）` }, { status: 400 })
+      console.error('查詢 profiles 表失敗:', pErr)
+      return NextResponse.json({ error: '查詢住戶資料失敗' }, { status: 500 })
     }
 
-    // 3) 取得 line_user_id（優先用 profiles.line_user_id；否則回退查 line_users.profile_id）
-    let lineUserId = profile.line_user_id ?? null
+    if (!profile?.id) {
+      return NextResponse.json({ error: `未找到單位 ID ${fee.unit_id} 的住戶` }, { status: 404 })
+    }
+
+    // 3) 確認 line_user_id
+    let lineUserId = profile.line_user_id
 
     if (!lineUserId) {
       const { data: lu, error: luErr } = await supabase
         .from('line_users')
         .select('line_user_id')
         .eq('profile_id', profile.id)
-        .limit(1)
         .maybeSingle()
 
       if (luErr) {
-        return NextResponse.json({ error: '查詢 line_users 失敗', detail: luErr.message }, { status: 500 })
+        console.error('查詢 line_users 表失敗:', luErr)
+        return NextResponse.json({ error: '查詢 LINE 綁定失敗' }, { status: 500 })
       }
-      lineUserId = lu?.line_user_id ?? null
+
+      lineUserId = lu?.line_user_id
     }
 
     if (!lineUserId) {
-      return NextResponse.json({ error: '此住戶尚未完成 LINE 綁定（line_user_id 為空）' }, { status: 400 })
+      return NextResponse.json({ error: '此住戶尚未完成 LINE 綁定' }, { status: 400 })
     }
 
-    // 4) 組催繳訊息（使用 due）
+    // 4) 發送通知
     const text =
       customMessage ??
-      `親愛的${profile?.name ?? fee.room}您好，
-您本期的管理費尚未繳清：
-房號：${fee.room}
-金額：${fee.amount}
-到期日：${fee.due}
-狀態：${fee.paid ? '已繳' : '未繳'}
-${fee.note ? `備註：${fee.note}` : ''}
-請盡快完成繳費，謝謝！`
+      `親愛的${profile?.name ?? '住戶'}您好，\n` +
+      `您本期的管理費尚未繳清：\n` +
+      `金額：${fee.amount}\n` +
+      `到期日：${fee.due}\n` +
+      `狀態：${fee.paid ? '已繳' : '未繳'}\n` +
+      `${fee.note ? `備註：${fee.note}` : ''}\n` +
+      `請盡快完成繳費，謝謝！`
 
-    // 5) 呼叫 LINE Push API
     const resp = await fetch(LINE_API, {
       method: 'POST',
       headers: {
@@ -98,14 +106,24 @@ ${fee.note ? `備註：${fee.note}` : ''}
 
     if (!resp.ok) {
       const errText = await resp.text()
-      return NextResponse.json({ error: 'LINE push failed', detail: errText }, { status: 500 })
+      console.error('LINE 推播失敗:', errText)
+      return NextResponse.json({ error: 'LINE 推播失敗', detail: errText }, { status: 500 })
     }
 
-    // 6) 更新 updated_at（或你也可以新增 last_reminded_at 欄位）
-    await supabase.from('fees').update({ updated_at: new Date().toISOString() }).eq('id', fee.id)
+    // 5) 更新 fees 表的 updated_at 欄位
+    const { error: updateErr } = await supabase
+      .from('fees')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', fee.id)
+
+    if (updateErr) {
+      console.error('更新 fees 表失敗:', updateErr)
+      return NextResponse.json({ error: '更新費用記錄失敗' }, { status: 500 })
+    }
 
     return NextResponse.json({ ok: true })
   } catch (e) {
-       return NextResponse.json({ error: e?.message ?? 'Server error' }, { status: 500 })
-    }
-}     
+    console.error('伺服器錯誤:', e)
+    return NextResponse.json({ error: e.message || '伺服器錯誤' }, { status: 500 })
+  }
+}

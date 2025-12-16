@@ -37,34 +37,23 @@ export async function POST(req) {
       return NextResponse.json({ message: '測試成功' });
     }
 
-    // --- 1. 儲存到 Supabase ---
-    const { data, error } = await supabase
-      .from('fees')
-      .insert([
-        {
-          room,
-          amount,
-          due,
-          invoice: invoice || '',
-          created_at: time
-        }
-      ])
-      .select('id');
-
-    if (error) {
-      console.error('Supabase 插入錯誤:', error);
-      return NextResponse.json({ error }, { status: 500 });
-    }
-
     // --- 2. LINE 推播 ---
     // 先從 units 表中查詢 unit_id
+    console.log('查詢 units 表的 unit_number:', room); // 調試用，打印 room 的值
     const { data: unitData, error: unitError } = await supabase
       .from('units')
       .select('id')
-      .eq('room_number', room) // 使用 room_number 作為查詢條件
+      .eq('unit_number', room) // 使用 unit_number 作為查詢條件
       .single();
 
-    if (unitError || !unitData) {
+    if (unitError) {
+      if (unitError.code === 'PGRST116') {
+        console.error('查詢 units 表無結果，可能單位編號不存在:', unitError);
+        return NextResponse.json(
+          { error: '查無對應單位編號，請確認輸入是否正確' },
+          { status: 404 }
+        );
+      }
       console.error('查詢 units 表失敗:', unitError);
       return NextResponse.json(
         { error: '查詢單位資料失敗，無法推播 LINE 訊息' },
@@ -120,6 +109,27 @@ export async function POST(req) {
       const errText = await lineRes.text();
       console.error('LINE 推播失敗:', errText);
       return NextResponse.json({ error: errText }, { status: 500 });
+    }
+
+    console.log('管理費通知已成功發送');
+
+    // --- 1. 儲存到 Supabase ---
+    const { data, error } = await supabase
+      .from('fees')
+      .insert([
+        {
+          unit_id: unitId, // 使用從 units 表查詢到的 unit_id
+          amount,
+          due,
+          invoice: invoice || '',
+          created_at: time
+        }
+      ])
+      .select('id');
+
+    if (error) {
+      console.error('Supabase 插入錯誤:', error);
+      return NextResponse.json({ error }, { status: 500 });
     }
 
     // --- 成功 ---
