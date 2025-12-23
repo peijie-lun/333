@@ -44,28 +44,48 @@ export async function POST(req) {
       return Response.json({ message: '測試成功' });
     }
 
-    // --- 1. 儲存資料到 Supabase ---
-    const { error } = await supabase.from('packages').insert([
-      {
-        courier,
-        recipient_name,
-        recipient_room,
-        tracking_number: tracking_number || '',
-        arrived_at,
-        status: 'pending',
-      },
-    ]);
+    // --- 查詢 units 表獲取 unit_id ---
+    // 同時比對 unit_code 與 unit_number
+    const { data: unit, error: unitError } = await supabase
+      .from('units')
+      .select('id')
+      .or(`unit_code.eq.${recipient_room},unit_number.eq.${recipient_room}`)
+      .single();
 
-    if (error) {
-      console.error('Supabase 插入錯誤:', error);
-      return Response.json({ error }, { status: 500 });
+    if (unitError || !unit) {
+      console.error('查詢 units 表失敗:', unitError);
+      return Response.json({ error: '未找到對應的 unit_id' }, { status: 404 });
     }
 
+    const unitId = unit.id;
+
+    // --- 1. 儲存資料到 Supabase ---
+    const { data: insertedPackage, error: insertError } = await supabase
+      .from('packages')
+      .insert({
+        courier,
+        tracking_number: tracking_number || null,
+        arrived_at,
+        unit_id: unitId,
+        recipient_id: null, // 如果有 recipient_id，請替換此處
+        status: 'pending',
+      })
+      .select('id')
+      .single();
+
+    if (insertError) {
+      console.error('Supabase 插入錯誤:', insertError);
+      return Response.json({ error: '插入資料失敗' }, { status: 500 });
+    }
+
+    const packageId = insertedPackage.id;
+
     // --- 2. 根據 unit_id 查詢 profiles 表的 line_user_id ---
+    // 以剛剛插入的 unitId 查詢 profiles 表
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('line_user_id')
-      .eq('unit_id', recipient_room) // 假設 recipient_room 對應 unit_id
+      .eq('unit_id', unitId)
       .single();
 
     if (profileError || !profile?.line_user_id) {
