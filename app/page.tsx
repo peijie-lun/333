@@ -408,7 +408,7 @@ export default function AdminDashboard() {
         marginBottom: '40px'
       }}>
         <h2 style={{ textAlign: 'center', marginBottom: '20px', color: '#333' }}>推播包裹通知</h2>
-        <PackagePushButton />
+        <PackagePushButton onPush={() => {}} />
       </section>
     </main>
   );
