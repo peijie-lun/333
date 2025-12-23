@@ -61,8 +61,19 @@ export async function POST(req) {
       return Response.json({ error }, { status: 500 });
     }
 
-    // --- 2. 你的固定 LINE User ID，可改成動態 ---
-    const lineUserId = 'U5dbd8b5fb153630885b656bb5f8ae011';
+    // --- 2. 根據 unit_id 查詢 profiles 表的 line_user_id ---
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('line_user_id')
+      .eq('unit_id', recipient_room) // 假設 recipient_room 對應 unit_id
+      .single();
+
+    if (profileError || !profile?.line_user_id) {
+      console.error('查詢 profiles 表失敗或未找到 line_user_id:', profileError);
+      return Response.json({ error: '未找到對應的 LINE 使用者' }, { status: 404 });
+    }
+
+    const lineUserId = profile.line_user_id;
 
     // --- 3. Flex Message ---
     const flexMessage = {
@@ -115,7 +126,7 @@ export async function POST(req) {
       }
     };
 
-    // --- 4. 使用 LINE SDK 推播（強烈建議的方式） ---
+    // --- 4. 使用 LINE SDK 推播 ---
     await client.pushMessage(lineUserId, flexMessage);
 
     // --- 成功回應 ---

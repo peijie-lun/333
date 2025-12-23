@@ -71,11 +71,10 @@ export default function AdminDashboard() {
   const [announceLoading, setAnnounceLoading] = useState(false);
   const [announceMessage, setAnnounceMessage] = useState('');
 
-  // 投票狀態
+  // 投票狀態（簡化為標題、截止時間、Google Form 網址）
   const [voteTitle, setVoteTitle] = useState('');
-  const [voteDescription, setVoteDescription] = useState('');
-  const [voteAuthor, setVoteAuthor] = useState('');
   const [voteEndsAt, setVoteEndsAt] = useState('');
+  const [voteFormUrl, setVoteFormUrl] = useState('');
   const [voteLoading, setVoteLoading] = useState(false);
   const [voteMessage, setVoteMessage] = useState('');
 
@@ -122,7 +121,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // 投票提交
+  // 投票（問卷）提交
   const handleVoteSubmit = async (e) => {
     e.preventDefault();
     setVoteLoading(true);
@@ -131,14 +130,18 @@ export default function AdminDashboard() {
       const res = await fetch('/api/votes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: voteTitle, description: voteDescription, author: voteAuthor, ends_at: voteEndsAt })
+        body: JSON.stringify({
+          title: voteTitle,
+          ends_at: voteEndsAt,
+          form_url: voteFormUrl
+        })
       });
       const data = await res.json();
       if (res.ok) {
-        setVoteMessage('✅ 投票已發布並推播到 LINE Bot！');
-        setVoteTitle(''); setVoteDescription(''); setVoteAuthor(''); setVoteEndsAt('');
+        setVoteMessage('✅ 問卷連結已通知 LINE Bot！');
+        setVoteTitle(''); setVoteEndsAt(''); setVoteFormUrl('');
       } else {
-        setVoteMessage(`❌ 錯誤：${data.error || '無法發布投票'}`);
+        setVoteMessage(`❌ 錯誤：${data.error || '無法發送問卷連結'}`);
       }
     } catch (err) {
       setVoteMessage(`❌ 系統錯誤：${err.message}`);
@@ -246,15 +249,14 @@ export default function AdminDashboard() {
         {announceMessage && <p style={{ marginTop: '15px', textAlign: 'center', color: announceMessage.includes('錯誤') ? 'red' : 'green' }}>{announceMessage}</p>}
       </section>
 
-      {/* 投票 */}
+      {/* 問卷（投票） */}
       <section style={cardStyle}>
-        <h2 style={{ textAlign: 'center', marginBottom: '20px', color: '#333' }}>新增投票</h2>
+        <h2 style={{ textAlign: 'center', marginBottom: '20px', color: '#333' }}>發起問卷連結通知</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-          <input type="text" placeholder="投票標題" value={voteTitle} onChange={(e) => setVoteTitle(e.target.value)} style={inputStyle} />
-          <textarea placeholder="投票說明" value={voteDescription} onChange={(e) => setVoteDescription(e.target.value)} rows={4} style={inputStyle} />
-          <input type="text" placeholder="發布者" value={voteAuthor} onChange={(e) => setVoteAuthor(e.target.value)} style={inputStyle} />
+          <input type="text" placeholder="問卷標題" value={voteTitle} onChange={(e) => setVoteTitle(e.target.value)} style={inputStyle} />
           <input type="datetime-local" placeholder="截止時間" value={voteEndsAt} onChange={(e) => setVoteEndsAt(e.target.value)} style={inputStyle} />
-          <button onClick={handleVoteSubmit} disabled={voteLoading} style={buttonStyle('#4CAF50')}>{voteLoading ? '發布中...' : '儲存投票並推播'}</button>
+          <input type="url" placeholder="Google Form 網址" value={voteFormUrl} onChange={(e) => setVoteFormUrl(e.target.value)} style={inputStyle} />
+          <button onClick={handleVoteSubmit} disabled={voteLoading} style={buttonStyle('#4CAF50')}>{voteLoading ? '通知中...' : '發起問卷連結通知'}</button>
         </div>
         {voteMessage && <p style={{ marginTop: '15px', textAlign: 'center', color: voteMessage.includes('錯誤') ? 'red' : 'green' }}>{voteMessage}</p>}
       </section>
