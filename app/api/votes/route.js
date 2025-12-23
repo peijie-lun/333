@@ -112,6 +112,7 @@ export async function POST(req) {
         console.error('❌ 投票寫入失敗:', recordError.message, recordError);
         return Response.json({ error: '投票失敗', details: recordError.message }, { status: 500 });
       }
+      
 
       console.log('✅ 投票成功:', voteRecord);
 
@@ -122,74 +123,41 @@ export async function POST(req) {
     }
 
     // -----------------------------
-    // ✅ 管理者發布新投票
+    // ✅ 管理者發布新問卷（純文字推播）
     // -----------------------------
-    const { title, description, author, ends_at, options, test } = body;
+    const { title, description, author, ends_at, form_url, test } = body;
 
-    if (!title || !author || !ends_at) {
-      return Response.json({ error: 'title, author, ends_at 為必填' }, { status: 400 });
+    if (!title || !ends_at || !form_url) {
+      return Response.json({ error: 'title, ends_at, form_url 為必填' }, { status: 400 });
     }
 
     if (test === true) {
-      return Response.json({ message: '投票測試成功，未推播' });
+      return Response.json({ message: '問卷測試成功，未推播' });
     }
 
-    const time = new Date().toLocaleString('zh-TW', { hour12: false });
-
-    // 儲存投票
-    const { data: voteInsert, error } = await supabase.from('votes').insert([{
+    // 儲存問卷（可選，若有需要記錄）
+    await supabase.from('votes').insert([{
       title,
-      description,
+      description: description || '',
       ends_at,
-      author,
-      options: options || ['同意', '反對', '棄權'],
+      form_url,
+      author: author || '管理員',
       created_at: new Date().toISOString()
-    }]).select();
+    }]);
 
-    if (error || !voteInsert || !voteInsert[0]) {
-      console.error('Supabase 插入錯誤:', error);
-      return Response.json({ error }, { status: 500 });
-    }
+    // 組合純文字訊息
+    const text =
+      `📢 新問卷通知\n` +
+      `標題：${title}\n` +
+      `截止時間：${ends_at}\n` +
+      `請點擊下方連結填寫問卷：\n${form_url}`;
 
-    const vote_id = voteInsert[0].id;
-    const voteOptions = options || ['同意', '反對', '棄權'];
-
-    // 建立 Flex Message
-    const flexMessage = {
-      type: 'flex',
-      altText: '📢 新投票通知',
-      contents: {
-        type: 'bubble',
-        body: {
-          type: 'box',
-          layout: 'vertical',
-          spacing: 'md',
-          contents: [
-            { type: 'text', text: '📢 新的投票', weight: 'bold', size: 'lg' },
-            { type: 'separator', margin: 'md' },
-            { type: 'text', text: `📌 標題：${title}`, wrap: true, weight: 'bold' },
-            { type: 'text', text: `📝 說明：${description || '無'}`, wrap: true },
-            { type: 'text', text: `⏰ 截止時間：${ends_at}`, color: '#aaaaaa', size: 'sm' },
-            { type: 'text', text: `👤 發布者：${author}`, color: '#aaaaaa', size: 'sm' },
-            { type: 'text', text: `🕒 時間：${time}`, color: '#aaaaaa', size: 'sm' },
-          ],
-        },
-      },
-      quickReply: {
-        items: voteOptions.map(opt => ({
-          type: 'action',
-          action: {
-            type: 'message',
-            label: `🗳️ ${opt}`,
-            text: `vote:${vote_id}:${opt} 🗳️`
-          }
-        }))
-      }
-    };
-
-    await client.broadcast(flexMessage);
+    // 推播給所有用戶
+    await client.broadcast({
+      type: 'text',
+      text
+    });
     return Response.json({ success: true });
-
   } catch (err) {
     console.error('votes POST 錯誤:', err);
     return Response.json({ error: 'Internal Server Error', details: err.message }, { status: 500 });
