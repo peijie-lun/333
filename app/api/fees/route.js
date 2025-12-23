@@ -89,9 +89,7 @@ export async function POST(req) {
             `💰 管理費通知\n` +
             `房號：${room}\n` +
             `金額：NT$ ${amount}\n` +
-            `到期日：${due}\n` +
-            `發票：${invoice || '無'}\n` +
-            `建立時間：${time}`
+            `到期日：${due}`
         }
       ],
     };
@@ -120,9 +118,7 @@ export async function POST(req) {
         {
           unit_id: unitId, // 使用從 units 表查詢到的 unit_id
           amount,
-          due,
-          invoice: invoice || '',
-          created_at: time
+          due
         }
       ])
       .select('id');
