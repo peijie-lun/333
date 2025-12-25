@@ -4,7 +4,7 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
-import axios from 'axios';
+import { chat } from '../../../grokmain.js';
 import 'dotenv/config';
 
 export const runtime = 'nodejs';
@@ -217,23 +217,10 @@ export async function POST(req) {
           continue;
         }
 
-        // 3️⃣ 其他 → 呼叫 /api/llm
+        // 3️⃣ 其他 → 直接呼叫 chat 函數
         try {
-          // 自動切換 LLM API 網域
-          let llmApiUrl = process.env.LLM_API_URL;
-          if (!llmApiUrl) {
-            if (process.env.VERCEL_URL) {
-              llmApiUrl = `https://${process.env.VERCEL_URL}/api/llm`;
-            } else {
-              llmApiUrl = 'http://localhost:3000/api/llm';
-            }
-          }
-          const llmRes = await axios.post(
-            llmApiUrl,
-            { query: userText },
-            { headers: { 'Content-Type': 'application/json' } }
-          );
-          const answer = llmRes.data?.answer || '目前沒有找到相關資訊，請查看社區公告。';
+          const result = await chat(userText);
+          const answer = result?.answer || '目前沒有找到相關資訊，請查看社區公告。';
           await client.replyMessage(replyToken, { type: 'text', text: answer.trim() });
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
