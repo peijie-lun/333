@@ -224,7 +224,12 @@ export async function POST(req) {
           await client.replyMessage(replyToken, { type: 'text', text: answer.trim() });
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
-          await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
+          // 只在 replyToken 尚未使用時才回覆
+          try {
+            await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
+          } catch (replyErr) {
+            console.error('回覆錯誤訊息失敗 (可能 token 已使用):', replyErr.message);
+          }
         }
       }
     }
