@@ -1,6 +1,6 @@
 // supabase_auto_sync_v2.js - 即時同步並儲存到 Supabase
 const { createClient } = require('@supabase/supabase-js');
-const { spawnSync } = require('child_process');
+const { getEmbedding } = require('./embedding');
 require('dotenv').config({ path: __dirname + '/.env' });
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -12,16 +12,6 @@ class SupabaseAutoSync {
 		this.isWatching = false;
 		this.channels = [];
 		this.processingIds = new Set(); // 防止重複處理
-	}
-
-	getEmbedding(text) {
-		const py = spawnSync('python', [__dirname + '/embedding.py', text], { encoding: 'utf-8' });
-		if (py.error || py.status !== 0) return null;
-		try {
-			return JSON.parse(py.stdout);
-		} catch {
-			return null;
-		}
 	}
 
 	// 更新 knowledge embedding
@@ -40,7 +30,7 @@ class SupabaseAutoSync {
 		this.processingIds.add(key);
 		
 		try {
-			const embedding = this.getEmbedding(content);
+			const embedding = await getEmbedding(content, 'search_document');
 			if (!embedding) {
 				console.error(`[Error] ID ${id} embedding 生成失敗`);
 				return false;
@@ -84,7 +74,7 @@ class SupabaseAutoSync {
 		
 		try {
 			const imgContent = `圖片: ${description || '無描述'}\nURL: ${url}`;
-			const embedding = this.getEmbedding(imgContent);
+			const embedding = await getEmbedding(imgContent, 'search_document');
 			
 			if (!embedding) {
 				console.error(`[Error] 圖片 ID ${id} embedding 生成失敗`);

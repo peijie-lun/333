@@ -2,26 +2,11 @@
 require('dotenv').config({ path: __dirname + '/.env' });
 
 const { createClient } = require('@supabase/supabase-js');
-const { spawnSync } = require('child_process');
+const { getEmbedding } = require('./embedding');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// 生成 embedding
-function getEmbedding(text) {
-  const py = spawnSync('python', [__dirname + '/embedding.py', text], { encoding: 'utf-8' });
-  if (py.error || py.status !== 0) {
-    console.error('[Error] embedding 生成失敗:', py.stderr);
-    return null;
-  }
-  try {
-    return JSON.parse(py.stdout);
-  } catch {
-    console.error('[Error] embedding 解析失敗');
-    return null;
-  }
-}
 
 // 更新所有 knowledge 資料的 embedding
 async function updateKnowledgeEmbeddings() {
@@ -45,7 +30,7 @@ async function updateKnowledgeEmbeddings() {
   let failCount = 0;
 
   for (const item of items) {
-    const embedding = getEmbedding(item.content);
+    const embedding = await getEmbedding(item.content, 'search_document');
     
     if (embedding) {
       const { error: updateError } = await supabase
@@ -90,7 +75,7 @@ async function updateImageEmbeddings() {
 
   for (const item of items) {
     const imgContent = `圖片: ${item.description || '無描述'}\nURL: ${item.url}`;
-    const embedding = getEmbedding(imgContent);
+    const embedding = await getEmbedding(imgContent, 'search_document');
     
     if (embedding) {
       const { error: updateError } = await supabase
@@ -119,7 +104,7 @@ async function main() {
   console.log('[Batch] 開始批次更新 embedding 到 Supabase...\n');
   
   await updateKnowledgeEmbeddings();
-  await updateImagesEmbeddings();
+  await updateImageEmbeddings();
   
   console.log('\n[Batch] 所有更新完成!');
 }
@@ -132,4 +117,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { updateKnowledgeEmbeddings, updateImagesEmbeddings };
+module.exports = { updateKnowledgeEmbeddings, updateImageEmbeddings };

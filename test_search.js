@@ -26,7 +26,7 @@ async function test() {
 
   // 2. 測試搜尋函數
   console.log('\n\n測試搜尋函數...');
-  const testVector = Array(384).fill(0.1); // 測試向量
+  const testVector = Array(1024).fill(0.1); // 測試向量 (Cohere 1024維)
   const { data: searchData, error: searchError } = await supabase.rpc('search_knowledge', {
     query_embedding: testVector,
     match_threshold: 0.0,

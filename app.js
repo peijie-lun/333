@@ -1,10 +1,24 @@
 // app.js - 使用 Supabase pgvector 版本
 const express = require('express');
-const { chat } = require('./grokmain.cjs');
+const { chat } = require('./grokmain');
 const { startAutoSync, stopAutoSync } = require('./supabase_auto_sync');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// CORS 設定 - 允許前端連接
+app.use((req, res, next) => {
+	res.header('Access-Control-Allow-Origin', '*'); // 允許所有來源
+	res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+	res.header('Access-Control-Allow-Headers', 'Content-Type');
+	
+	// 處理 preflight request
+	if (req.method === 'OPTIONS') {
+		return res.sendStatus(200);
+	}
+	
+	next();
+});
 
 app.use(express.json());
 

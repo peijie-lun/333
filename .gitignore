@@ -1,60 +1,10 @@
-# Node.js
-node_modules/
-npm-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# Next.js
-.next/
-out/
-dist/
-build/
-
-# Environment variables
+# 環境變數
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
 
-# Logs
-logs/
-*.log
-
-# OS 系統檔案
-.DS_Store
-Thumbs.db
-
-# Python
+# Python 虛擬環境
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-*.env/
-venv/
-env/
-*.egg-info/
-*.pytest_cache/
 
-# Embedding / Supabase cache
-lib/supabase_embeddings.json
-
-# Python virtual environments
-.venv/
-venv/
-ENV/
-
-# IDE / Editor
-.vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
-
-# Optional: npm lock file (如果不想鎖定)
-# package-lock.json
-# yarn.lock
-# pnpm-lock.yaml
-
-# Misc
-*.bak
-*.tmp
+# 快取檔案
+*.json.backup
+supabase_embeddings.json
