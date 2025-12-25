@@ -219,8 +219,17 @@ export async function POST(req) {
 
         // 3️⃣ 其他 → 呼叫 /api/llm
         try {
+          // 自動切換 LLM API 網域
+          let llmApiUrl = process.env.LLM_API_URL;
+          if (!llmApiUrl) {
+            if (process.env.VERCEL_URL) {
+              llmApiUrl = `https://${process.env.VERCEL_URL}/api/llm`;
+            } else {
+              llmApiUrl = 'http://localhost:3000/api/llm';
+            }
+          }
           const llmRes = await axios.post(
-            process.env.LLM_API_URL || 'http://localhost:3000/api/llm',
+            llmApiUrl,
             { query: userText },
             { headers: { 'Content-Type': 'application/json' } }
           );
