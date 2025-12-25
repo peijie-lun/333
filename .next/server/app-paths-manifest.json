@@ -1,5 +1,17 @@
 {
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/auth/register/route": "app/api/auth/register/route.js",
+  "/api/bind-line/route": "app/api/bind-line/route.js",
+  "/api/auth/login/route": "app/api/auth/login/route.js",
+  "/api/remind-fee/route": "app/api/remind-fee/route.js",
+  "/api/llm/route": "app/api/llm/route.js",
+  "/bind-line/page": "app/bind-line/page.js",
   "/page": "app/page.js",
   "/api/fees/route": "app/api/fees/route.js",
-  "/api/remind-fee/route": "app/api/remind-fee/route.js"
+  "/api/debug/route": "app/api/debug/route.js",
+  "/api/announce/route": "app/api/announce/route.js",
+  "/api/line/route": "app/api/line/route.js",
+  "/api/votes/route": "app/api/votes/route.js",
+  "/api/sync/route": "app/api/sync/route.js",
+  "/api/packages/route": "app/api/packages/route.js"
 }
