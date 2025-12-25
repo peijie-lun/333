@@ -4,7 +4,7 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
-import { generateAnswer, getImageUrlsByKeyword } from '../../../grokmain.cjs';
+import axios from 'axios';
 import 'dotenv/config';
 
 export const runtime = 'nodejs';
@@ -217,11 +217,15 @@ export async function POST(req) {
           continue;
         }
 
-        // 3️⃣ 其他 → Groq LLM
+        // 3️⃣ 其他 → 呼叫 /api/llm
         try {
-          const answer = await generateAnswer(userText);
-          const replyMessage = typeof answer === 'string' ? answer.trim() : '目前沒有找到相關資訊，請查看社區公告。';
-          await client.replyMessage(replyToken, { type: 'text', text: replyMessage });
+          const llmRes = await axios.post(
+            process.env.LLM_API_URL || 'http://localhost:3000/api/llm',
+            { query: userText },
+            { headers: { 'Content-Type': 'application/json' } }
+          );
+          const answer = llmRes.data?.answer || '目前沒有找到相關資訊，請查看社區公告。';
+          await client.replyMessage(replyToken, { type: 'text', text: answer.trim() });
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
           await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
