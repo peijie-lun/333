@@ -167,12 +167,4 @@ async function chat(query) {
   }
 }
 
-// 測試用 (可刪除)
-
-
-// 測試用 (可刪除)
-chat('可不可以養寵物?').then(() => {
-  process.exit(0);
-});
-
 export { chat };
