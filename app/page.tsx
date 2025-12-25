@@ -217,7 +217,7 @@ export default function AdminDashboard() {
       }
     } catch (err) {
       setVoteMessage(`❌ 系統錯誤：${err.message}`);
-    } finally {
+    } finally {            
       setVoteLoading(false);
     }
   };
