@@ -1,3 +1,8 @@
+// Debug: 檢查環境變數是否正確讀取
+console.log('[DEBUG] GROQ_API_KEY 長度:', process.env.GROQ_API_KEY?.length);
+console.log('[DEBUG] COHERE_API_KEY 長度:', process.env.COHERE_API_KEY?.length);
+console.log('[DEBUG] SUPABASE_URL:', process.env.SUPABASE_URL);
+console.log('[DEBUG] SUPABASE_ANON_KEY 長度:', process.env.SUPABASE_ANON_KEY?.length);
 // grokmain.js - 使用 Supabase pgvector 版本
 
 import dotenv from 'dotenv';
