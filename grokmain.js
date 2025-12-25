@@ -1,9 +1,16 @@
 // grokmain.js - 使用 Supabase pgvector 版本
-require('dotenv').config({ path: __dirname + '/.env' });
 
-const axios = require('axios');
-const { createClient } = require('@supabase/supabase-js');
-const { getEmbedding } = require('./embedding');
+import dotenv from 'dotenv';
+import axios from 'axios';
+import { createClient } from '@supabase/supabase-js';
+import { getEmbedding } from './embedding.js';
+
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: __dirname + '/.env' });
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama3-8b-8192';
@@ -15,20 +22,23 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // 主要聊天函數
 async function chat(query) {
   console.log(`\n[Query] 問題: ${query}`);
+  console.log('[Debug] Step 1: 產生 embedding 前');
   
   // 1. 生成問題的 embedding (使用 Cohere)
   const queryEmbedding = await getEmbedding(query, 'search_query');
+  console.log('[Debug] Step 1: 產生 embedding 後', queryEmbedding ? '成功' : '失敗');
   if (!queryEmbedding) {
     return { error: 'embedding 生成失敗' };
   }
 
   // 2. 使用 Supabase RPC 函數搜尋相似內容
+  console.log('[Debug] Step 2: Supabase search_knowledge 前');
   const { data: searchResults, error: searchError } = await supabase.rpc('search_knowledge', {
     query_embedding: queryEmbedding,
     match_threshold: 0.8,
     match_count: 5
   });
-
+  console.log('[Debug] Step 2: Supabase search_knowledge 後', searchResults ? '有結果' : '無結果', searchError ? searchError : '');
   if (searchError) {
     console.error('[Error] 搜尋失敗:', searchError);
     return { error: '搜尋失敗' };
@@ -39,6 +49,7 @@ async function chat(query) {
 
   // 3. Fallback: 如果相似度太低,使用關鍵字搜尋
   if (!searchResults || searchResults.length === 0 || maxSim < 0.9) {
+    console.log('[Debug] Step 3: 進入關鍵字 fallback');
     console.log('[Fallback] 相似度不足,啟用關鍵字搜尋...');
     
     // 拆解關鍵字 (n-gram)
@@ -53,10 +64,12 @@ async function chat(query) {
     console.log(`[Keywords] ${ngrams.slice(0, 10).join(', ')}`);
 
     // 從資料庫用關鍵字搜尋
+    console.log('[Debug] Step 3: Supabase 關鍵字查詢前');
     const { data: allData } = await supabase
       .from('knowledge')
       .select('id, content')
       .not('embedding', 'is', null);
+    console.log('[Debug] Step 3: Supabase 關鍵字查詢後', allData ? `共${allData.length}筆` : '無資料');
 
     if (allData) {
       const keywordMatches = allData.filter(item => 
@@ -76,11 +89,13 @@ async function chat(query) {
   }
 
   if (!finalResults || finalResults.length === 0) {
+    console.log('[Debug] Step 4: 沒有任何相關資料');
     console.log('[Error] 找不到任何相關資料');
     return { answer: '抱歉，我找不到相關資料來回答這個問題。' };
   }
 
   // 4. 顯示搜尋結果
+  console.log('[Debug] Step 5: 顯示搜尋結果');
   console.log('\n[Results] 最終結果前 3 筆:');
   finalResults.slice(0, 3).forEach((item, idx) => {
     console.log(`\n#${idx + 1} 相似度: ${(item.similarity * 100).toFixed(2)}%`);
@@ -88,24 +103,27 @@ async function chat(query) {
   });
 
   // 5. 組合上下文
+  console.log('[Debug] Step 6: 組合上下文');
   const context = finalResults
     .slice(0, 3)
     .map(item => item.content)
     .join('\n\n---\n\n');
 
   // 5. 搜尋相關圖片
+  console.log('[Debug] Step 7: 搜尋相關圖片前');
   const { data: imageResults } = await supabase.rpc('search_images', {
     query_embedding: queryEmbedding,
     match_threshold: 0.6,
     match_count: 3
   });
-
+  console.log('[Debug] Step 7: 搜尋相關圖片後', imageResults ? `共${imageResults.length}張` : '無資料');
   const images = imageResults?.map(img => img.url) || [];
   if (images.length > 0) {
     console.log(`\n[Images] 找到 ${images.length} 張相關圖片`);
   }
 
   // 6. 呼叫 Groq API 生成回答
+  console.log('[Debug] Step 8: 呼叫 Groq API 前');
   try {
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -129,7 +147,7 @@ async function chat(query) {
         }
       }
     );
-
+    console.log('[Debug] Step 8: Groq API 回傳', response.data);
     const answer = response.data.choices[0].message.content;
     console.log(`\n[Answer] 回答:\n${answer}\n`);
 
@@ -145,10 +163,11 @@ async function chat(query) {
 }
 
 // 測試用 (可刪除)
-if (require.main === module) {
-  chat('可不可以養寵物?').then(() => {
-    process.exit(0);
-  });
-}
 
-module.exports = { chat };
+
+// 測試用 (可刪除)
+chat('可不可以養寵物?').then(() => {
+  process.exit(0);
+});
+
+export { chat };

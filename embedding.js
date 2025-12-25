@@ -1,6 +1,13 @@
 // embedding.js - 使用 Cohere API 生成 embedding (取代 Python 版本)
-require('dotenv').config({ path: __dirname + '/.env' });
-const { CohereClient } = require('cohere-ai');
+
+import dotenv from 'dotenv';
+import { CohereClient } from 'cohere-ai';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: __dirname + '/.env' });
 
 const cohere = new CohereClient({
   token: process.env.COHERE_API_KEY,
@@ -48,4 +55,5 @@ async function getEmbeddings(texts, inputType = 'search_document') {
   }
 }
 
-module.exports = { getEmbedding, getEmbeddings };
+
+export { getEmbedding, getEmbeddings };
