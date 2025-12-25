@@ -16,7 +16,8 @@ const lineConfig = {
 
 const client = new Client(lineConfig);// LINE Bot SDK 客戶端
 
-const IMAGE_KEYWORDS = ['圖片', '設施', '游泳池', '健身房', '大廳'];// 可擴充更多關鍵字
+// 移除圖片關鍵字攔截，讓所有查詢都進入 AI 處理
+// const IMAGE_KEYWORDS = ['圖片', '設施', '游泳池', '健身房', '大廳'];
 // 處理 LINE Webhook 請求
 export async function POST(req) {
   try {
@@ -211,13 +212,7 @@ export async function POST(req) {
           continue;
         }
 
-        // 2️⃣ 圖片關鍵字
-        if (IMAGE_KEYWORDS.some(kw => userText.includes(kw))) {
-          await client.replyMessage(replyToken, { type: 'text', text: '目前圖片查詢功能尚未啟用。' });
-          continue;
-        }
-
-        // 3️⃣ 其他 → 直接呼叫 chat 函數
+        // 2️⃣ 其他問題 → 直接呼叫 chat 函數進行 AI 查詢
         try {
           const result = await chat(userText);
           const answer = result?.answer || '目前沒有找到相關資訊，請查看社區公告。';
