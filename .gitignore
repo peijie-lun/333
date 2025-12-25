@@ -8,3 +8,7 @@ __pycache__/
 # 快取檔案
 *.json.backup
 supabase_embeddings.json
+
+
+.next
+node_modules
