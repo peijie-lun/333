@@ -1,8 +1,10 @@
+
 import { supabase } from '../../../supabaseClient';
 
 export async function POST(req) {
-  const { visitorName, visitorPhone, purpose, reserveTime } = await req.json();
+  const { visitorName, visitorPhone, purpose, reserveTime, unitId, reservedById } = await req.json();
 
+  // 寫入 visitors 表，優先用前端傳入的 unitId、reservedById
   const { data, error } = await supabase
     .from('visitors')
     .insert([
@@ -11,7 +13,8 @@ export async function POST(req) {
         phone: visitorPhone,
         purpose: purpose,
         reservation_time: reserveTime,
-        // 其他欄位可依需求補上
+        unit_id: unitId,
+        reserved_by_id: reservedById,
       }
     ])
     .select();

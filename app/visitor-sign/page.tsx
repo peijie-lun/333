@@ -9,7 +9,32 @@ export default function Page() {
   const [visitorPhone, setVisitorPhone] = useState('');
   const [purpose, setPurpose] = useState('');
   const [reserveTime, setReserveTime] = useState('');
+  const [residentName, setResidentName] = useState('');
+  const [unitId, setUnitId] = useState('');
+  const [reservedById, setReservedById] = useState('');
   const [result, setResult] = useState('');
+  // 根據住戶名稱查 profile
+  const handleResidentNameBlur = async () => {
+    if (!residentName) return;
+    try {
+      const res = await fetch('/api/profile-by-name', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: residentName }),
+      });
+      if (res.ok) {
+        const profile = await res.json();
+        setUnitId(profile.unit_id || '');
+        setReservedById(profile.id || '');
+      } else {
+        setUnitId('');
+        setReservedById('');
+      }
+    } catch {
+      setUnitId('');
+      setReservedById('');
+    }
+  };
 
   // 警衛簽到/簽退欄位
   const [signName, setSignName] = useState('');
@@ -32,6 +57,8 @@ export default function Page() {
           visitorPhone,
           purpose,
           reserveTime,
+          unitId,
+          reservedById,
         }),
       });
       if (!visitorRes.ok) {
@@ -59,7 +86,9 @@ export default function Page() {
         setPurpose('');
         setReserveTime('');
       } else {
-        setResult('預約成功，但通知發送失敗');
+        const errorText = await response.text();
+        console.error('Line Notify response:', errorText);
+        setResult(`預約成功，但通知發送失敗\n${errorText}`);
       }
     } catch (error) {
       console.error('Error sending reservation notification:', error);
@@ -120,6 +149,14 @@ export default function Page() {
         placeholder="來訪目的"
         value={purpose}
         onChange={e => setPurpose(e.target.value)}
+        style={{ width: '100%', padding: 8, marginBottom: 8 }}
+      />
+      <input
+        type="text"
+        placeholder="住戶名稱"
+        value={residentName}
+        onChange={e => setResidentName(e.target.value)}
+        onBlur={handleResidentNameBlur}
         style={{ width: '100%', padding: 8, marginBottom: 8 }}
       />
       <input

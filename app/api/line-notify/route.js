@@ -40,6 +40,6 @@ export async function POST(req) {
     return new Response('Notification sent', { status: 200 });
   } catch (error) {
     console.error('Error sending LINE notification:', error);
-    return new Response('Failed to send notification', { status: 500 });
+    return new Response(`Failed to send notification: ${error?.message || error}`, { status: 500 });
   }
 }
