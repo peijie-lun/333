@@ -10,5 +10,5 @@ __pycache__/
 supabase_embeddings.json
 
 
-.next
+.next/
 node_modules
