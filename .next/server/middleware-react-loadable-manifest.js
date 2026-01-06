@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST='{"app\\\\bind-line\\\\page.tsx -> @line/liff":{"id":1571,"files":["static/chunks/571.9d5d38f5a2b57c7d.js"]}}';
+self.__REACT_LOADABLE_MANIFEST="{}"
