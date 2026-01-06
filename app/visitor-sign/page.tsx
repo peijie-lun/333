@@ -23,6 +23,24 @@ export default function Page() {
     }
 
     try {
+      // 先存進 supabase visitors 表
+      const visitorRes = await fetch('/api/visitor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          visitorName,
+          visitorPhone,
+          purpose,
+          reserveTime,
+        }),
+      });
+      if (!visitorRes.ok) {
+        setResult('預約失敗，請稍後再試');
+        return;
+      }
+      const visitorData = await visitorRes.json();
+
+      // 再推播
       const response = await fetch('/api/line-notify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -30,6 +48,7 @@ export default function Page() {
           type: 'reservation',
           visitorName,
           time: reserveTime,
+          visitorId: visitorData.id,
         }),
       });
 
