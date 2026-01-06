@@ -21,12 +21,31 @@ export default function Page() {
       setResult('請完整填寫所有欄位');
       return;
     }
-    // 這裡可串接後端 API 儲存預約
-    setResult(`預約成功！\n姓名：${visitorName}\n電話：${visitorPhone}\n目的：${purpose}\n時間：${reserveTime}`);
-    setVisitorName('');
-    setVisitorPhone('');
-    setPurpose('');
-    setReserveTime('');
+
+    try {
+      const response = await fetch('/api/line-notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'reservation',
+          visitorName,
+          time: reserveTime,
+        }),
+      });
+
+      if (response.ok) {
+        setResult(`預約成功！\n姓名：${visitorName}\n電話：${visitorPhone}\n目的：${purpose}\n時間：${reserveTime}`);
+        setVisitorName('');
+        setVisitorPhone('');
+        setPurpose('');
+        setReserveTime('');
+      } else {
+        setResult('預約成功，但通知發送失敗');
+      }
+    } catch (error) {
+      console.error('Error sending reservation notification:', error);
+      setResult('預約失敗，請稍後再試');
+    }
   };
 
   // 警衛簽到/簽退
@@ -35,9 +54,29 @@ export default function Page() {
       setSignResult('請輸入訪客姓名');
       return;
     }
-    // 這裡可串接後端 API
-    setSignResult(`已${action === 'checkin' ? '簽到' : '簽退'}：${signName}`);
-    setSignName('');
+
+    try {
+      const response = await fetch('/api/line-notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: action,
+          visitorName: signName,
+          time: new Date().toLocaleTimeString(),
+          location: '社區管理室',
+        }),
+      });
+
+      if (response.ok) {
+        setSignResult(`已${action === 'checkin' ? '簽到' : '簽退'}：${signName}`);
+        setSignName('');
+      } else {
+        setSignResult('操作成功，但通知發送失敗');
+      }
+    } catch (error) {
+      console.error('Error sending checkin/checkout notification:', error);
+      setSignResult('操作失敗，請稍後再試');
+    }
   };
 
   return (
