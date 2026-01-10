@@ -40,84 +40,37 @@ export async function POST(req) {
     }
 
 
-    // 組合 Flex Message
-    // Flex Message 內容陣列，過濾掉 null/undefined
-    const bodyContents = [
-      { type: 'box', layout: 'baseline', contents: [ { type: 'text', text: '🕒', size: 'sm', flex: 0 }, { type: 'text', text: String(time), size: 'sm', margin: 'sm', flex: 1 } ] },
-      { type: 'box', layout: 'baseline', contents: [ { type: 'text', text: '📍', size: 'sm', flex: 0 }, { type: 'text', text: location, size: 'sm', margin: 'sm', flex: 1 } ] },
-      { type: 'separator', margin: 'md' },
-      { type: 'text', text: '📌 重點摘要', weight: 'bold', size: 'sm', margin: 'md' },
-      ...(Array.isArray(key_takeaways) ? key_takeaways.map(t => t ? { type: 'text', text: t, size: 'sm', wrap: true } : null) : []),
-      notes ? { type: 'text', text: `備註：${notes}`, size: 'sm', wrap: true, margin: 'md' } : null,
-      pdf_file_url ? { type: 'button', action: { type: 'uri', label: '下載 PDF', uri: pdf_file_url }, style: 'primary', margin: 'md' } : null,
-    ].filter(Boolean);
 
-    const detailUrl = pdf_file_url && typeof pdf_file_url === 'string' && pdf_file_url.startsWith('http') ? pdf_file_url : 'https://line.me';
-    const flexMessage = {
-      type: 'flex',
-      altText: '會議公告',
-      contents: {
-        type: 'bubble',
-        size: 'mega',
-        header: {
-          type: 'box',
-          layout: 'vertical',
-          backgroundColor: '#1976d2',
-          paddingAll: '16px',
-          contents: [
-            { type: 'text', text: '會議公告', weight: 'bold', size: 'xl', color: '#fff', align: 'center', margin: 'none' },
-            { type: 'text', text: String(topic).slice(0, 40), weight: 'bold', size: 'md', color: '#fff', align: 'center', margin: 'md' },
-          ],
-        },
-        body: {
-          type: 'box',
-          layout: 'vertical',
-          spacing: 'md',
-          contents: [
-            {
-              type: 'box',
-              layout: 'horizontal',
-              contents: [
-                { type: 'text', text: '🕒', size: 'sm', flex: 0 },
-                { type: 'text', text: String(time), size: 'sm', color: '#1976d2', flex: 1, margin: 'sm' },
-              ],
-            },
-            {
-              type: 'box',
-              layout: 'horizontal',
-              contents: [
-                { type: 'text', text: '📍地點', size: 'sm', flex: 0 },
-                { type: 'text', text: location, size: 'sm', color: '#1976d2', flex: 1, margin: 'sm' },
-              ],
-            },
-            { type: 'separator', margin: 'md' },
-            { type: 'text', text: '📌 重點摘要', weight: 'bold', size: 'sm', color: '#1976d2', margin: 'md' },
-            ...(Array.isArray(key_takeaways) ? key_takeaways.filter(Boolean).map(t => ({ type: 'text', text: t, size: 'sm', wrap: true, margin: 'sm' })) : []),
-            ...(notes ? [{ type: 'text', text: `備註：${notes}`, size: 'sm', wrap: true, color: '#666', margin: 'md' }] : []),
-            ...(pdf_file_url ? [{ type: 'button', action: { type: 'uri', label: '下載 PDF', uri: pdf_file_url }, style: 'primary', color: '#1976d2', margin: 'md' }] : []),
-          ].slice(0, 10),
-        },
-        footer: {
-          type: 'box',
-          layout: 'vertical',
-          contents: [
-            { type: 'button', action: { type: 'uri', label: '👉 查看詳情', uri: detailUrl }, style: 'link', color: '#1976d2' }, //之後可以放我們系統部上去vercel的網址
+    // 進一步優化訊息格式
+    let message =
+      `📢 會議公告\n` +
+      `====================\n` +
+      `主題：${topic}\n` +
+      `🕒 時間：${time}\n` +
+      `📍 地點：${location}\n`;
 
-          ],
-        },
-      },
-    };
+    if (Array.isArray(key_takeaways) && key_takeaways.length > 0) {
+      message += `\n--------------------\n📌 重點摘要\n` + key_takeaways.map((t) => `・${t}`).join('\n');
+    }
+    if (notes) message += `\n--------------------\n📝 備註\n${notes}`;
+    if (pdf_file_url) message += `\n--------------------\n📄 PDF下載\n${pdf_file_url}`;
 
-    // 初始化 LINE client
-    const client = new line.Client({
-      channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
-    });
+    message += `\n====================`;
 
-    // 廣播 Flex Message
-    await client.broadcast(flexMessage);
 
-    return NextResponse.json({ success: true, meeting });
-  } catch (e) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
-  }
-}
+    // 初始化 LINE client（只宣告一次）
+    let client;
+    if (!global._lineClient) {
+      global._lineClient = new line.Client({
+        channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
+      });
+    }
+    client = global._lineClient;
+
+    // 廣播純文字訊息
+    await client.broadcast({ type: 'text', text: message });
+    return NextResponse.json({ message: '會議通知已發送' });
+  } catch (error) {
+    console.error('Error in meeting notify:', error);
+    return NextResponse.json({ error: '伺服器錯誤' }, { status: 500 });
+  }}
