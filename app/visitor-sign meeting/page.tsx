@@ -127,9 +127,54 @@ export default function Page() {
     }
   };
 
+  // 會議公告欄位
+  const [meetingTopic, setMeetingTopic] = useState('');
+  const [meetingTime, setMeetingTime] = useState('');
+  const [meetingLocation, setMeetingLocation] = useState('');
+  const [meetingTakeaways, setMeetingTakeaways] = useState('');
+  const [meetingNotes, setMeetingNotes] = useState('');
+  const [meetingPdfUrl, setMeetingPdfUrl] = useState('');
+  const [meetingResult, setMeetingResult] = useState('');
+
+  const handleMeetingSubmit = async () => {
+    if (!meetingTopic || !meetingTime || !meetingLocation || !meetingTakeaways) {
+      setMeetingResult('請完整填寫主題、時間、地點、重點摘要');
+      return;
+    }
+    try {
+      const res = await fetch('/api/meeting-notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic: meetingTopic,
+          time: meetingTime,
+          location: meetingLocation,
+          key_takeaways: meetingTakeaways.split('\n').filter(Boolean),
+          notes: meetingNotes,
+          pdf_file_url: meetingPdfUrl,
+        }),
+      });
+      if (res.ok) {
+        setMeetingResult('會議公告已發布並推播！');
+        setMeetingTopic('');
+        setMeetingTime('');
+        setMeetingLocation('');
+        setMeetingTakeaways('');
+        setMeetingNotes('');
+        setMeetingPdfUrl('');
+      } else {
+        const err = await res.text();
+        setMeetingResult('發布失敗：' + err);
+      }
+    } catch (e) {
+      setMeetingResult('發布失敗，請稍後再試');
+    }
+  };
+
   return (
     <div style={{ maxWidth: 420, margin: '40px auto', padding: 24, border: '1px solid #ccc', borderRadius: 8 }}>
       <h2>住戶預約訪客</h2>
+      {/* ...原本訪客預約表單... */}
       <input
         type="text"
         placeholder="訪客姓名"
@@ -183,6 +228,51 @@ export default function Page() {
         <button onClick={() => handleAction('checkout')} style={{ flex: 1, padding: 8 }}>簽退</button>
       </div>
       {signResult && <div style={{ color: 'green' }}>{signResult}</div>}
+
+      <hr style={{ margin: '32px 0' }} />
+      <h2>管理者發布會議公告</h2>
+      <input
+        type="text"
+        placeholder="主題"
+        value={meetingTopic}
+        onChange={e => setMeetingTopic(e.target.value)}
+        style={{ width: '100%', padding: 8, marginBottom: 8 }}
+      />
+      <input
+        type="datetime-local"
+        placeholder="時間"
+        value={meetingTime}
+        onChange={e => setMeetingTime(e.target.value)}
+        style={{ width: '100%', padding: 8, marginBottom: 8 }}
+      />
+      <input
+        type="text"
+        placeholder="地點"
+        value={meetingLocation}
+        onChange={e => setMeetingLocation(e.target.value)}
+        style={{ width: '100%', padding: 8, marginBottom: 8 }}
+      />
+      <textarea
+        placeholder="重點摘要 (每行一點)"
+        value={meetingTakeaways}
+        onChange={e => setMeetingTakeaways(e.target.value)}
+        style={{ width: '100%', padding: 8, marginBottom: 8, minHeight: 60 }}
+      />
+      <textarea
+        placeholder="備註 (選填)"
+        value={meetingNotes}
+        onChange={e => setMeetingNotes(e.target.value)}
+        style={{ width: '100%', padding: 8, marginBottom: 8, minHeight: 40 }}
+      />
+      <input
+        type="text"
+        placeholder="PDF 下載網址 (選填)"
+        value={meetingPdfUrl}
+        onChange={e => setMeetingPdfUrl(e.target.value)}
+        style={{ width: '100%', padding: 8, marginBottom: 12 }}
+      />
+      <button onClick={handleMeetingSubmit} style={{ width: '100%', padding: 10, background: '#388e3c', color: '#fff', border: 'none', borderRadius: 4, marginBottom: 12 }}>發布會議公告</button>
+      {meetingResult && <div style={{ color: meetingResult.includes('失敗') ? 'red' : 'green', whiteSpace: 'pre-line' }}>{meetingResult}</div>}
     </div>
   );
 }
