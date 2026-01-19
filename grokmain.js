@@ -24,10 +24,106 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// 同義詞字典
+const SYNONYMS = {
+  '包裹': ['包裹', '郵件', '快遞', '宅配', '包包', '貨物', '寄件', '收件', '掛號'],
+  '管費': ['管理費', '繳費', '費用', '管費', '月費', '社區費', '大樓費用', '管委會費用', '公共基金'],
+  '訪客': ['訪客', '來訪', '客人', '訪問', '拜訪', '朋友來', '親友', '訪友'],
+  '設施': ['設施', '公設', '公共設施', '健身房', '游泳池', '大廳', '會議室', '交誼廳', '閱覽室', '停車場'],
+  '停車': ['停車', '車位', '停車場', '停車位', '車庫', '汽車', '機車', '停車費'],
+  '維修': ['維修', '修理', '故障', '壞掉', '報修', '損壞', '不能用', '維護', '保養'],
+  '投訴': ['投訴', '抱怨', '檢舉', '申訴', '反應', '反映', '建議', '意見'],
+  '安全': ['安全', '保全', '門禁', '監視器', '警衛', '安全性', '防盜', '巡邏'],
+  '垃圾': ['垃圾', '回收', '資源回收', '廚餘', '清潔', '打掃', '環境'],
+  '寵物': ['寵物', '狗', '貓', '動物', '毛小孩', '養寵物'],
+  '噪音': ['噪音', '吵', '聲音', '太吵', '噪音問題', '擾民', '安寧'],
+  '會議': ['會議', '住戶大會', '區權會', '管委會', '開會', '會議紀錄'],
+  '公告': ['公告', '通知', '消息', '最新消息', '公布', '佈告欄'],
+  '其他': []
+};
+
+// 正規化問題：去標點、統一小寫、同義詞替換
+function normalizeQuestion(text) {
+  // 1. 去除標點符號（保留中英文、數字、空格）
+  let normalized = text.replace(/[^\u4e00-\u9fa5a-zA-Z0-9\s]/g, '');
+  
+  // 2. 統一轉小寫
+  normalized = normalized.toLowerCase();
+  
+  // 3. 去除多餘空白
+  normalized = normalized.replace(/\s+/g, ' ').trim();
+  
+  // 4. 同義詞替換：將同義詞統一為主詞
+  for (const [mainWord, synonyms] of Object.entries(SYNONYMS)) {
+    for (const synonym of synonyms) {
+      if (normalized.includes(synonym.toLowerCase())) {
+        normalized = normalized.replace(new RegExp(synonym.toLowerCase(), 'g'), mainWord);
+      }
+    }
+  }
+  
+  return normalized;
+}
+
+// Intent 分類函數（依關鍵字與信心度）
+function classifyIntent(text) {
+  const lowerText = text.toLowerCase();
+  
+  // 定義每個 intent 的關鍵字與權重
+  const intentPatterns = [
+    { intent: '包裹', keywords: ['包裹', '郵件', '快遞', '宅配', '收件', '寄件', '掛號'], confidence: 0.9 },
+    { intent: '管費', keywords: ['管理費', '繳費', '費用', '管費', '月費', '社區費', '滯納金'], confidence: 0.9 },
+    { intent: '訪客', keywords: ['訪客', '來訪', '客人', '訪問', '拜訪', '親友'], confidence: 0.85 },
+    { intent: '設施', keywords: ['設施', '公設', '健身房', '游泳池', '大廳', '會議室', '交誼廳', '停車場'], confidence: 0.85 },
+    { intent: '停車', keywords: ['停車', '車位', '停車場', '車庫', '汽車', '機車'], confidence: 0.85 },
+    { intent: '維修', keywords: ['維修', '修理', '故障', '壞掉', '報修', '損壞', '不能用'], confidence: 0.85 },
+    { intent: '投訴', keywords: ['投訴', '抱怨', '檢舉', '申訴', '反應', '反映'], confidence: 0.8 },
+    { intent: '安全', keywords: ['安全', '保全', '門禁', '監視器', '警衛', '防盜'], confidence: 0.85 },
+    { intent: '垃圾', keywords: ['垃圾', '回收', '資源回收', '廚餘', '清潔'], confidence: 0.85 },
+    { intent: '寵物', keywords: ['寵物', '狗', '貓', '動物', '毛小孩'], confidence: 0.85 },
+    { intent: '噪音', keywords: ['噪音', '吵', '太吵', '擾民', '安寧'], confidence: 0.85 },
+    { intent: '會議', keywords: ['會議', '住戶大會', '區權會', '管委會', '開會'], confidence: 0.85 },
+    { intent: '公告', keywords: ['公告', '通知', '消息', '最新消息', '佈告欄'], confidence: 0.8 },
+  ];
+  
+  // 計算每個 intent 的匹配度
+  let bestMatch = { intent: null, confidence: 0 };
+  
+  for (const pattern of intentPatterns) {
+    let matchCount = 0;
+    for (const keyword of pattern.keywords) {
+      if (lowerText.includes(keyword.toLowerCase())) {
+        matchCount++;
+      }
+    }
+    
+    if (matchCount > 0) {
+      const confidence = Math.min(pattern.confidence * (matchCount / pattern.keywords.length * 2), 1.0);
+      if (confidence > bestMatch.confidence) {
+        bestMatch = { intent: pattern.intent, confidence };
+      }
+    }
+  }
+  
+  return bestMatch;
+}
+
 // 主要聊天函數
 async function chat(query) {
   console.log(`\n[Query] 問題: ${query}`);
   console.log('[Debug] Step 1: 產生 embedding 前');
+  
+  // 初始化 chat_log 相關變數
+  const normalized_question = normalizeQuestion(query);
+  console.log(`[Normalized] 正規化後: ${normalized_question}`);
+  
+  const intentResult = classifyIntent(query);
+  let intent = intentResult.intent;
+  let intent_confidence = intentResult.confidence > 0 ? intentResult.confidence : null;
+  console.log(`[Intent] 意圖: ${intent || '未知'} (信心度: ${intent_confidence || 'N/A'})`);
+  
+  let answered = false;
+  let maxSimilarity = 0;
   
   // 1. 生成問題的 embedding (使用 Cohere)
   const queryEmbedding = await getEmbedding(query, 'search_query');
@@ -51,6 +147,7 @@ async function chat(query) {
 
   let finalResults = searchResults;
   let maxSim = searchResults?.[0]?.similarity || 0;
+  maxSimilarity = maxSim; // 記錄最高相似度
 
   // 3. Fallback: 如果相似度太低,使用關鍵字搜尋
   if (!searchResults || searchResults.length === 0 || maxSim < 0.9) {
@@ -156,6 +253,26 @@ async function chat(query) {
     const answer = response.data.choices[0].message.content;
     console.log(`\n[Answer] 回答:\n${answer}\n`);
 
+    // 判斷 answered：相似度 >= 0.8 視為成功回答
+    answered = maxSimilarity >= 0.8;
+
+    // 寫入 Supabase chat_log
+    const logData = {
+      raw_question: query,
+      normalized_question,
+      intent,
+      intent_confidence,
+      answered,
+      created_at: new Date().toISOString(),
+    };
+
+    const { error: insertError } = await supabase.from('chat_log').insert([logData]);
+    if (insertError) {
+      console.error('[Supabase Insert Error]', insertError);
+    } else {
+      console.log('[Supabase] chat_log 寫入成功');
+    }
+
     return {
       answer,
       images,
@@ -163,6 +280,22 @@ async function chat(query) {
     };
   } catch (error) {
     console.error('[Error] Groq API 錯誤:', error.response?.data || error.message);
+    
+    // 即使失敗也寫入 chat_log
+    const logData = {
+      raw_question: query,
+      normalized_question,
+      intent,
+      intent_confidence,
+      answered: false,
+      created_at: new Date().toISOString(),
+    };
+
+    const { error: insertError } = await supabase.from('chat_log').insert([logData]);
+    if (insertError) {
+      console.error('[Supabase Insert Error]', insertError);
+    }
+    
     return { error: 'AI 回答生成失敗' };
   }
 }
