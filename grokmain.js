@@ -186,6 +186,9 @@ async function chat(query) {
           content: item.content,
           similarity: 0.5 - idx * 0.1  // 模擬相似度
         }));
+        // 更新 maxSimilarity 為 fallback 結果的最高相似度
+        maxSimilarity = finalResults[0]?.similarity || 0;
+        console.log(`[Fallback] 更新 maxSimilarity 為: ${maxSimilarity}`);
       }
     }
   }
@@ -253,8 +256,12 @@ async function chat(query) {
     const answer = response.data.choices[0].message.content;
     console.log(`\n[Answer] 回答:\n${answer}\n`);
 
-    // 判斷 answered：相似度 >= 0.8 視為成功回答
-    answered = maxSimilarity >= 0.8;
+    // 判斷 answered：
+    // 1. 如果有找到相似資料（相似度 >= 0.5）且成功生成答案 → true
+    // 2. 如果回答內容是「找不到相關資料」→ false
+    const isNotFoundAnswer = answer.includes('找不到相關資料') || answer.includes('沒有找到') || answer.includes('無法回答');
+    answered = !isNotFoundAnswer && (maxSimilarity >= 0.5 || finalResults.length > 0);
+    console.log(`[Answered] ${answered} (相似度: ${maxSimilarity}, 有結果: ${finalResults.length > 0})`);
 
     // 寫入 Supabase chat_log
     const logData = {
