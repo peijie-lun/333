@@ -257,11 +257,25 @@ async function chat(query) {
     console.log(`\n[Answer] 回答:\n${answer}\n`);
 
     // 判斷 answered：
-    // 1. 如果有找到相似資料（相似度 >= 0.5）且成功生成答案 → true
-    // 2. 如果回答內容是「找不到相關資料」→ false
-    const isNotFoundAnswer = answer.includes('找不到相關資料') || answer.includes('沒有找到') || answer.includes('無法回答');
-    answered = !isNotFoundAnswer && (maxSimilarity >= 0.5 || finalResults.length > 0);
-    console.log(`[Answered] ${answered} (相似度: ${maxSimilarity}, 有結果: ${finalResults.length > 0})`);
+    // 1. 檢查回答內容是否為「找不到」、「無法回答」、「沒有提及」等否定回答
+    // 2. 只要不是否定回答，且有找到參考資料，就視為成功回答
+    const negativePatterns = [
+      '找不到相關資料',
+      '沒有找到',
+      '無法回答',
+      '沒有提及',
+      '並無提及',
+      '無相關',
+      '未提及',
+      '沒有提到',
+      '無法提供',
+      '抱歉'
+    ];
+    const isNotFoundAnswer = negativePatterns.some(pattern => answer.includes(pattern));
+    
+    // 只要有找到資料且成功生成答案（非否定回答），就是 answered = true
+    answered = !isNotFoundAnswer && finalResults.length > 0;
+    console.log(`[Answered] ${answered} (相似度: ${maxSimilarity}, 有結果: ${finalResults.length > 0}, 否定回答: ${isNotFoundAnswer})`);
 
     // 寫入 Supabase chat_log
     const logData = {
