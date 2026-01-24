@@ -312,23 +312,36 @@ export async function POST(req) {
         const data = event.postback.data;
         const replyToken = event.replyToken;
         
+        console.log('[DEBUG Postback] 原始 data:', data);
+        
         // 解析 postback data
         const params = new URLSearchParams(data);
         const action = params.get('action');
         const chatLogId = params.get('chatLogId');
         const feedbackType = params.get('type');
         
+        console.log('[DEBUG Postback] action:', action);
+        console.log('[DEBUG Postback] chatLogId:', chatLogId, 'type:', typeof chatLogId);
+        console.log('[DEBUG Postback] feedbackType:', feedbackType);
+        
         if (action === 'feedback' && chatLogId) {
+          const chatLogIdInt = parseInt(chatLogId);
+          console.log('[DEBUG Postback] chatLogIdInt:', chatLogIdInt);
+          
           try {
             // 記錄回饋到 chat_feedback
-            const { error: feedbackError } = await supabase
+            const { data: insertedFeedback, error: feedbackError } = await supabase
               .from('chat_feedback')
               .insert([{
-                chat_log_id: parseInt(chatLogId),
+                chat_log_id: chatLogIdInt,
                 user_id: userId,
                 feedback_type: feedbackType,
                 created_at: new Date().toISOString()
-              }]);
+              }])
+              .select();
+            
+            console.log('[DEBUG Postback] Insert result:', insertedFeedback);
+            console.log('[DEBUG Postback] Insert error:', feedbackError);
             
             if (feedbackError) {
               console.error('[Feedback Error]', feedbackError);
