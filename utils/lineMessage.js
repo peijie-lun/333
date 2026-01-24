@@ -87,3 +87,62 @@ export function buildImageCarousel(images) {
     },
   };
 }
+
+// 產生回饋 Quick Reply 按鈕
+export function createFeedbackQuickReply(chatLogId) {
+  return {
+    items: [
+      {
+        type: "action",
+        action: {
+          type: "postback",
+          label: "👍 有幫助",
+          data: `action=feedback&type=helpful&chatLogId=${chatLogId}`,
+          displayText: "👍 有幫助"
+        }
+      },
+      {
+        type: "action",
+        action: {
+          type: "postback",
+          label: "🤔 不太清楚",
+          data: `action=feedback&type=unclear&chatLogId=${chatLogId}`,
+          displayText: "🤔 不太清楚"
+        }
+      },
+      {
+        type: "action",
+        action: {
+          type: "postback",
+          label: "👎 沒幫助",
+          data: `action=feedback&type=not_helpful&chatLogId=${chatLogId}`,
+          displayText: "👎 沒幫助"
+        }
+      }
+    ]
+  };
+}
+
+// 產生澄清選項 Quick Reply
+export function createClarificationQuickReply(chatLogId, options) {
+  return {
+    items: options.map(option => ({
+      type: "action",
+      action: {
+        type: "postback",
+        label: option.label,
+        data: `action=clarify&chatLogId=${chatLogId}&choice=${option.value}`,
+        displayText: option.label
+      }
+    }))
+  };
+}
+
+// 建立帶有回饋按鈕的回覆訊息
+export function createMessageWithFeedback(text, chatLogId) {
+  return {
+    type: 'text',
+    text: text + '\n\n這個回答有幫助到你嗎？',
+    quickReply: createFeedbackQuickReply(chatLogId)
+  };
+}
