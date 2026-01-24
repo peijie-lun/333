@@ -277,47 +277,31 @@ async function chat(query) {
     answered = !isNotFoundAnswer && finalResults.length > 0;
     console.log(`[Answered] ${answered} (相似度: ${maxSimilarity}, 有結果: ${finalResults.length > 0}, 否定回答: ${isNotFoundAnswer})`);
 
-    // 寫入 Supabase chat_log
-    const logData = {
-      raw_question: query,
-      normalized_question,
-      intent,
-      intent_confidence,
-      answered,
-      created_at: new Date().toISOString(),
-    };
-
-    const { error: insertError } = await supabase.from('chat_log').insert([logData]);
-    if (insertError) {
-      console.error('[Supabase Insert Error]', insertError);
-    } else {
-      console.log('[Supabase] chat_log 寫入成功');
-    }
+    // 注意：chat_log 寫入已移到 app/api/line/route.js 統一處理，這裡不再重複寫入
 
     return {
       answer,
       images,
-      sources: searchResults.slice(0, 3)
+      sources: searchResults.slice(0, 3),
+      // 回傳 intent 相關資訊給呼叫方
+      normalized_question,
+      intent,
+      intent_confidence,
+      answered
     };
   } catch (error) {
     console.error('[Error] Groq API 錯誤:', error.response?.data || error.message);
     
-    // 即使失敗也寫入 chat_log
-    const logData = {
-      raw_question: query,
+    // 不在這裡寫入 chat_log，由呼叫方統一處理
+    
+    return { 
+      error: 'AI 回答生成失敗',
+      // 即使失敗也要回傳這些資訊
       normalized_question,
       intent,
       intent_confidence,
-      answered: false,
-      created_at: new Date().toISOString(),
+      answered: false
     };
-
-    const { error: insertError } = await supabase.from('chat_log').insert([logData]);
-    if (insertError) {
-      console.error('[Supabase Insert Error]', insertError);
-    }
-    
-    return { error: 'AI 回答生成失敗' };
   }
 }
 
