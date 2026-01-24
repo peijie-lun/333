@@ -254,46 +254,63 @@ export async function POST(req) {
             .insert([logData])
             .select();
           
+          console.log('[DEBUG] Insert result:', insertData);
+          console.log('[DEBUG] Insert error:', insertError);
+          
           if (!insertError && insertData?.[0]) {
             chatLogId = insertData[0].id;
+            console.log('[DEBUG] chatLogId 已取得:', chatLogId);
+          } else {
+            console.error('[ERROR] 無法取得 chatLogId, insertError:', insertError);
           }
           
-          // 建立帶回饋按鈕的訊息
-          const replyMessage = {
-            type: 'text',
-            text: answer.trim() + '\n\n這個回答有幫助到你嗎？',
-            quickReply: {
-              items: [
-                {
-                  type: 'action',
-                  action: {
-                    type: 'postback',
-                    label: '👍 有幫助',
-                    data: `action=feedback&type=helpful&chatLogId=${chatLogId}`,
-                    displayText: '👍 有幫助'
+          // 只有在有 chatLogId 時才建立回饋按鈕
+          let replyMessage;
+          if (chatLogId) {
+            // 建立帶回饋按鈕的訊息
+            replyMessage = {
+              type: 'text',
+              text: answer.trim() + '\n\n這個回答有幫助到你嗎？',
+              quickReply: {
+                items: [
+                  {
+                    type: 'action',
+                    action: {
+                      type: 'postback',
+                      label: '👍 有幫助',
+                      data: `action=feedback&type=helpful&chatLogId=${chatLogId}`,
+                      displayText: '👍 有幫助'
+                    }
+                  },
+                  {
+                    type: 'action',
+                    action: {
+                      type: 'postback',
+                      label: '🤔 不太清楚',
+                      data: `action=feedback&type=unclear&chatLogId=${chatLogId}`,
+                      displayText: '🤔 不太清楚'
+                    }
+                  },
+                  {
+                    type: 'action',
+                    action: {
+                      type: 'postback',
+                      label: '👎 沒幫助',
+                      data: `action=feedback&type=not_helpful&chatLogId=${chatLogId}`,
+                      displayText: '👎 沒幫助'
+                    }
                   }
-                },
-                {
-                  type: 'action',
-                  action: {
-                    type: 'postback',
-                    label: '🤔 不太清楚',
-                    data: `action=feedback&type=unclear&chatLogId=${chatLogId}`,
-                    displayText: '🤔 不太清楚'
-                  }
-                },
-                {
-                  type: 'action',
-                  action: {
-                    type: 'postback',
-                    label: '👎 沒幫助',
-                    data: `action=feedback&type=not_helpful&chatLogId=${chatLogId}`,
-                    displayText: '👎 沒幫助'
-                  }
-                }
-              ]
-            }
-          };
+                ]
+              }
+            };
+          } else {
+            // 沒有 chatLogId，只回覆純文字
+            console.warn('[WARNING] 沒有 chatLogId，只回覆純文字');
+            replyMessage = {
+              type: 'text',
+              text: answer.trim()
+            };
+          }
           
           await client.replyMessage(replyToken, replyMessage);
         } catch (err) {
