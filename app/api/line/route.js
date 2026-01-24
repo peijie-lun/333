@@ -214,9 +214,88 @@ export async function POST(req) {
 
         // 2️⃣ 其他問題 → 直接呼叫 chat 函數進行 AI 查詢
         try {
+          // LINE webhook event 的唯一 ID（有些版本欄位名稱不同）
+          const eventId = event.webhookEventId || event.id || `${userId}_${Date.now()}`;
+          console.log('[DEBUG] Event ID:', eventId);
+          console.log('[DEBUG] Event 完整資料:', JSON.stringify(event, null, 2));
+          
+          // 防重複：檢查此 eventId 是否已處理過
+          let chatLogId = null;
+          if (eventId) {
+            const { data: existingLog } = await supabase
+              .from('chat_log')
+              .select('id')
+              .eq('event_id', eventId)
+              .maybeSingle();
+            
+            if (existingLog) {
+              console.log('[防重複] eventId 已存在，跳過處理:', eventId);
+              continue;
+            }
+          }
+          
           const result = await chat(userText);
           const answer = result?.answer || '目前沒有找到相關資訊，請查看社區公告。';
-          await client.replyMessage(replyToken, { type: 'text', text: answer.trim() });
+          
+          // 寫入 chat_log
+          const logData = {
+            raw_question: userText,
+            normalized_question: result.normalized_question || userText,
+            intent: result.intent || null,
+            intent_confidence: typeof result.intent_confidence === 'number' ? result.intent_confidence : null,
+            answered: typeof result.answered === 'boolean' ? result.answered : (result.answer ? true : false),
+            user_id: userId || null,
+            event_id: eventId || null,
+            created_at: new Date().toISOString(),
+          };
+          
+          const { data: insertData, error: insertError } = await supabase
+            .from('chat_log')
+            .insert([logData])
+            .select();
+          
+          if (!insertError && insertData?.[0]) {
+            chatLogId = insertData[0].id;
+          }
+          
+          // 建立帶回饋按鈕的訊息
+          const replyMessage = {
+            type: 'text',
+            text: answer.trim() + '\n\n這個回答有幫助到你嗎？',
+            quickReply: {
+              items: [
+                {
+                  type: 'action',
+                  action: {
+                    type: 'postback',
+                    label: '👍 有幫助',
+                    data: `action=feedback&type=helpful&chatLogId=${chatLogId}`,
+                    displayText: '👍 有幫助'
+                  }
+                },
+                {
+                  type: 'action',
+                  action: {
+                    type: 'postback',
+                    label: '🤔 不太清楚',
+                    data: `action=feedback&type=unclear&chatLogId=${chatLogId}`,
+                    displayText: '🤔 不太清楚'
+                  }
+                },
+                {
+                  type: 'action',
+                  action: {
+                    type: 'postback',
+                    label: '👎 沒幫助',
+                    data: `action=feedback&type=not_helpful&chatLogId=${chatLogId}`,
+                    displayText: '👎 沒幫助'
+                  }
+                }
+              ]
+            }
+          };
+          
+          await client.replyMessage(replyToken, replyMessage);
         } catch (err) {
           console.error('查詢 LLM API 失敗:', err);
           // 只在 replyToken 尚未使用時才回覆
@@ -224,6 +303,74 @@ export async function POST(req) {
             await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
           } catch (replyErr) {
             console.error('回覆錯誤訊息失敗 (可能 token 已使用):', replyErr.message);
+          }
+        }
+      }
+      
+      // --- 3. 處理 postback 事件（回饋按鈕） ---
+      if (event.type === 'postback') {
+        const data = event.postback.data;
+        const replyToken = event.replyToken;
+        
+        // 解析 postback data
+        const params = new URLSearchParams(data);
+        const action = params.get('action');
+        const chatLogId = params.get('chatLogId');
+        const feedbackType = params.get('type');
+        
+        if (action === 'feedback' && chatLogId) {
+          try {
+            // 記錄回饋到 chat_feedback
+            const { error: feedbackError } = await supabase
+              .from('chat_feedback')
+              .insert([{
+                chat_log_id: parseInt(chatLogId),
+                user_id: userId,
+                feedback_type: feedbackType,
+                created_at: new Date().toISOString()
+              }]);
+            
+            if (feedbackError) {
+              console.error('[Feedback Error]', feedbackError);
+            }
+            
+            // 更新 chat_log
+            const feedbackField = feedbackType === 'helpful' ? 'success_count' :
+                                 feedbackType === 'unclear' ? 'unclear_count' : 'fail_count';
+            
+            const { data: chatLog } = await supabase
+              .from('chat_log')
+              .select('id, feedback, success_count, unclear_count, fail_count')
+              .eq('id', chatLogId)
+              .single();
+            
+            const updateData = {
+              feedback: feedbackType,
+              [feedbackField]: (chatLog?.[feedbackField] || 0) + 1
+            };
+            
+            if (feedbackType === 'not_helpful') {
+              updateData.answered = false;
+            }
+            
+            await supabase
+              .from('chat_log')
+              .update(updateData)
+              .eq('id', chatLogId);
+            
+            // 回覆訊息
+            let responseText = '';
+            if (feedbackType === 'helpful') {
+              responseText = '感謝你的回饋！很高興能幫助到你 😊';
+            } else if (feedbackType === 'unclear') {
+              responseText = '好，我懂～讓我提供更多資訊給你。';
+            } else if (feedbackType === 'not_helpful') {
+              responseText = '了解，這題目前資料可能不完整 🙏\n我會回報給管理單位補齊資料。';
+            }
+            
+            await client.replyMessage(replyToken, { type: 'text', text: responseText });
+          } catch (err) {
+            console.error('[Postback Error]', err);
           }
         }
       }
