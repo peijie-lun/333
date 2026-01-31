@@ -1,5 +1,6 @@
-import { Client } from '@line/bot-sdk';
+import { Client, validateSignature } from '@line/bot-sdk';
 import { createClient } from '@supabase/supabase-js';
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
@@ -23,6 +24,25 @@ export async function POST(req) {
   try {
     const rawBody = await req.text();// 取得原始請求體
     if (!rawBody) return new Response('Bad Request: Empty body', { status: 400 });
+
+    // 驗證 LINE signature（使用官方 SDK）
+    const signature = req.headers.get('x-line-signature');
+    console.log('[Debug] Channel Secret exists:', !!lineConfig.channelSecret);
+    console.log('[Debug] Signature exists:', !!signature);
+    console.log('[Debug] Body length:', rawBody.length);
+    
+    if (!signature) {
+      console.error('[Signature Error] No signature header');
+      return new Response('Unauthorized', { status: 401 });
+    }
+    
+    const isValid = validateSignature(rawBody, lineConfig.channelSecret, signature);
+    console.log('[Debug] Signature valid:', isValid);
+    
+    if (!isValid) {
+      console.error('[Signature Error] Invalid signature');
+      return new Response('Unauthorized', { status: 401 });
+    }
 
     let events;// 儲存事件陣列
     try {

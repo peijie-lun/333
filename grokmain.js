@@ -1,8 +1,3 @@
-// Debug: 檢查環境變數是否正確讀取
-console.log('[DEBUG] GROQ_API_KEY 長度:', process.env.GROQ_API_KEY?.length);
-console.log('[DEBUG] COHERE_API_KEY 長度:', process.env.COHERE_API_KEY?.length);
-console.log('[DEBUG] SUPABASE_URL:', process.env.SUPABASE_URL);
-console.log('[DEBUG] SUPABASE_ANON_KEY 長度:', process.env.SUPABASE_ANON_KEY?.length);
 // grokmain.js - 使用 Supabase pgvector 版本
 
 import dotenv from 'dotenv';
@@ -107,10 +102,10 @@ function generateClarificationOptions(searchResults, intent, originalQuery) {
       
       // 從搜尋結果提取選項
       topResults.forEach((result, index) => {
-        // 從內容中提取簡短標題（取前 20 字）
+        // 從內容中提取簡短標題（限制 15 字以內）
         const contentPreview = result.content
           .replace(/[\r\n]+/g, ' ')
-          .substring(0, 25) + '...';
+          .substring(0, 15);
         
         options.push({
           label: `${index + 1}. ${contentPreview}`,
@@ -291,14 +286,18 @@ async function chat(query) {
   }
 
   // ===== 追問澄清機制 =====
-  // 當相似度或意圖信心度低於閾值時，提供澄清選項而非直接回答
+  // 只有當問題很短且模糊時才觸發澄清（避免具體問題被誤判）
   const SIMILARITY_THRESHOLD = 0.65;
   const INTENT_CONFIDENCE_THRESHOLD = 0.6;
+  const SHORT_QUESTION_LENGTH = 3; // 問題長度少於等於3字才考慮澄清
   
-  const needsClarification = maxSimilarity < SIMILARITY_THRESHOLD || intent_confidence < INTENT_CONFIDENCE_THRESHOLD;
+  // 判斷是否為短且模糊的問題
+  const isShortQuestion = query.length <= SHORT_QUESTION_LENGTH;
+  const isLowConfidence = maxSimilarity < SIMILARITY_THRESHOLD || intent_confidence < INTENT_CONFIDENCE_THRESHOLD;
+  const needsClarification = isShortQuestion && isLowConfidence;
   
   if (needsClarification) {
-    console.log(`[Clarification] 觸發追問機制 - 相似度: ${maxSimilarity}, 意圖信心度: ${intent_confidence}`);
+    console.log(`[Clarification] 觸發追問機制 - 問題長度: ${query.length}, 相似度: ${maxSimilarity}, 意圖信心度: ${intent_confidence}`);
     
     // 產生澄清選項
     const clarificationData = generateClarificationOptions(finalResults, intent, query);
