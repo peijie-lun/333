@@ -235,7 +235,95 @@ export async function POST(req) {
           }
           
           const result = await chat(userText);
+          
+          // ===== 處理追問澄清機制 =====
+          if (result.needsClarification) {
+            console.log('[追問] 觸發澄清機制');
+            
+            // 寫入 chat_log (需要追問的記錄)
+            const logData = {
+              raw_question: userText,
+              normalized_question: result.normalized_question || userText,
+              intent: result.intent || null,
+              intent_confidence: typeof result.intent_confidence === 'number' ? result.intent_confidence : null,
+              answered: false,
+              needs_clarification: true,
+              user_id: userId || null,
+              event_id: eventId || null,
+              created_at: new Date().toISOString(),
+            };
+            
+            const { data: insertData, error: insertError } = await supabase
+              .from('chat_log')
+              .insert([logData])
+              .select();
+            
+            if (!insertError && insertData?.[0]) {
+              chatLogId = insertData[0].id;
+              console.log('[追問] chatLogId 已記錄:', chatLogId);
+              
+              // 記錄澄清選項到 clarification_options 表
+              const clarificationRecords = result.clarificationOptions.map((opt, index) => ({
+                chat_log_id: chatLogId,
+                option_label: opt.label,
+                option_value: opt.value,
+                display_order: index
+              }));
+              
+              await supabase
+                .from('clarification_options')
+                .insert(clarificationRecords);
+            }
+            
+            // 建立 Quick Reply 訊息
+            const clarificationMessage = {
+              type: 'text',
+              text: result.clarificationMessage,
+              quickReply: {
+                items: result.clarificationOptions.map(opt => ({
+                  type: 'action',
+                  action: {
+                    type: 'message',
+                    label: opt.label,
+                    text: opt.value  // 使用者點擊後會發送這個 value
+                  }
+                }))
+              }
+            };
+            
+            await client.replyMessage(replyToken, clarificationMessage);
+            continue;
+          }
+          
+          // ===== 正常回答流程 =====
           const answer = result?.answer || '目前沒有找到相關資訊，請查看社區公告。';
+          
+          // 檢查是否為追問回應 (訊息以 clarify: 開頭)
+          let clarificationParentId = null;
+          if (userText.startsWith('clarify:')) {
+            // 查找最近一次 needs_clarification = true 的記錄
+            const { data: parentLog } = await supabase
+              .from('chat_log')
+              .select('id')
+              .eq('user_id', userId)
+              .eq('needs_clarification', true)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            
+            if (parentLog) {
+              clarificationParentId = parentLog.id;
+              console.log('[追問] 這是澄清回應，parent_id:', clarificationParentId);
+              
+              // 更新 clarification_options，標記使用者選擇的選項
+              await supabase
+                .from('clarification_options')
+                .update({ selected: true, selected_at: new Date().toISOString() })
+                .eq('chat_log_id', clarificationParentId)
+                .eq('option_value', userText);
+            }
+          }
+
           
           // 寫入 chat_log
           const logData = {
@@ -244,10 +332,13 @@ export async function POST(req) {
             intent: result.intent || null,
             intent_confidence: typeof result.intent_confidence === 'number' ? result.intent_confidence : null,
             answered: typeof result.answered === 'boolean' ? result.answered : (result.answer ? true : false),
+            needs_clarification: false,
+            clarification_parent_id: clarificationParentId,
             user_id: userId || null,
             event_id: eventId || null,
             created_at: new Date().toISOString(),
           };
+
           
           const { data: insertData, error: insertError } = await supabase
             .from('chat_log')

@@ -42,6 +42,87 @@ const SYNONYMS = {
   '其他': []
 };
 
+/**
+ * 產生澄清選項
+ * 從 Top-N FAQ 結果生成追問選項
+ * @param {Array} searchResults - 搜尋結果陣列
+ * @param {string} intent - 分類意圖
+ * @param {string} originalQuery - 原始問題
+ * @returns {Object} { message: string, options: Array<{label, value}> }
+ */
+function generateClarificationOptions(searchResults, intent, originalQuery) {
+  console.log('[Clarification] 產生澄清選項...');
+  
+  // 取前 3-5 個結果
+  const topResults = searchResults.slice(0, Math.min(5, searchResults.length));
+  
+  // 根據意圖生成不同的澄清訊息
+  let message = '';
+  const options = [];
+  
+  switch(intent) {
+    case 'package':
+      message = '🤔 您是想問關於包裹的哪方面呢？';
+      options.push(
+        { label: '📦 領包裹流程', value: 'clarify:package_pickup' },
+        { label: '📮 寄包裹方式', value: 'clarify:package_send' },
+        { label: '⏰ 包裹室時間', value: 'clarify:package_hours' }
+      );
+      break;
+      
+    case 'fee':
+      message = '🤔 您是想問關於管理費的哪方面呢？';
+      options.push(
+        { label: '💰 繳費金額', value: 'clarify:fee_amount' },
+        { label: '📅 繳費日期', value: 'clarify:fee_date' },
+        { label: '💳 繳費方式', value: 'clarify:fee_method' }
+      );
+      break;
+      
+    case 'visitor':
+      message = '🤔 您是想問關於訪客的哪方面呢？';
+      options.push(
+        { label: '🚪 訪客登記', value: 'clarify:visitor_register' },
+        { label: '🅿️ 訪客停車', value: 'clarify:visitor_parking' },
+        { label: '⏰ 訪客時間', value: 'clarify:visitor_hours' }
+      );
+      break;
+      
+    case 'facility':
+      message = '🤔 您是想問關於設施的哪方面呢？';
+      options.push(
+        { label: '🏊 使用規定', value: 'clarify:facility_rules' },
+        { label: '📅 預約方式', value: 'clarify:facility_booking' },
+        { label: '⏰ 開放時間', value: 'clarify:facility_hours' }
+      );
+      break;
+      
+    default:
+      // 通用澄清：從 Top-N 結果擷取關鍵概念
+      message = '🤔 請問您是想了解以下哪個問題呢？';
+      
+      // 從搜尋結果提取選項
+      topResults.forEach((result, index) => {
+        // 從內容中提取簡短標題（取前 20 字）
+        const contentPreview = result.content
+          .replace(/[\r\n]+/g, ' ')
+          .substring(0, 25) + '...';
+        
+        options.push({
+          label: `${index + 1}. ${contentPreview}`,
+          value: `clarify:faq_${result.id}`
+        });
+      });
+  }
+  
+  // 永遠加上「其他問題」選項
+  options.push({ label: '❓ 其他問題', value: 'clarify:other' });
+  
+  console.log(`[Clarification] 產生 ${options.length} 個選項`);
+  
+  return { message, options };
+}
+
 // 正規化問題：去標點、統一小寫、同義詞替換
 function normalizeQuestion(text) {
   // 1. 去除標點符號（保留中英文、數字、空格）
@@ -196,7 +277,38 @@ async function chat(query) {
   if (!finalResults || finalResults.length === 0) {
     console.log('[Debug] Step 4: 沒有任何相關資料');
     console.log('[Error] 找不到任何相關資料');
-    return { answer: '抱歉，我找不到相關資料來回答這個問題。' };
+    return { 
+      answer: '抱歉，我找不到相關資料來回答這個問題。',
+      normalized_question,
+      intent,
+      intent_confidence,
+      answered: false
+    };
+  }
+
+  // ===== 追問澄清機制 =====
+  // 當相似度或意圖信心度低於閾值時，提供澄清選項而非直接回答
+  const SIMILARITY_THRESHOLD = 0.65;
+  const INTENT_CONFIDENCE_THRESHOLD = 0.6;
+  
+  const needsClarification = maxSimilarity < SIMILARITY_THRESHOLD || intent_confidence < INTENT_CONFIDENCE_THRESHOLD;
+  
+  if (needsClarification) {
+    console.log(`[Clarification] 觸發追問機制 - 相似度: ${maxSimilarity}, 意圖信心度: ${intent_confidence}`);
+    
+    // 產生澄清選項
+    const clarificationData = generateClarificationOptions(finalResults, intent, query);
+    
+    return {
+      needsClarification: true,
+      clarificationMessage: clarificationData.message,
+      clarificationOptions: clarificationData.options,
+      normalized_question,
+      intent,
+      intent_confidence,
+      answered: false,
+      similarity: maxSimilarity
+    };
   }
 
   // 4. 顯示搜尋結果
