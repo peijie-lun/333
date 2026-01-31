@@ -62,6 +62,7 @@ function generateClarificationOptions(searchResults, intent, originalQuery) {
   
   switch(intent) {
     case 'package':
+    case '包裹':
       message = '🤔 您是想問關於包裹的哪方面呢？';
       options.push(
         { label: '📦 領包裹流程', value: 'clarify:package_pickup' },
@@ -71,6 +72,7 @@ function generateClarificationOptions(searchResults, intent, originalQuery) {
       break;
       
     case 'fee':
+    case '管費':
       message = '🤔 您是想問關於管理費的哪方面呢？';
       options.push(
         { label: '💰 繳費金額', value: 'clarify:fee_amount' },
@@ -80,6 +82,7 @@ function generateClarificationOptions(searchResults, intent, originalQuery) {
       break;
       
     case 'visitor':
+    case '訪客':
       message = '🤔 您是想問關於訪客的哪方面呢？';
       options.push(
         { label: '🚪 訪客登記', value: 'clarify:visitor_register' },
@@ -89,6 +92,7 @@ function generateClarificationOptions(searchResults, intent, originalQuery) {
       break;
       
     case 'facility':
+    case '設施':
       message = '🤔 您是想問關於設施的哪方面呢？';
       options.push(
         { label: '🏊 使用規定', value: 'clarify:facility_rules' },
