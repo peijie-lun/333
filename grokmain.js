@@ -122,6 +122,55 @@ function generateClarificationOptions(searchResults, intent, originalQuery) {
   return { message, options };
 }
 
+// 處理澄清選項回應
+async function handleClarificationResponse(clarifyQuery) {
+  console.log(`[Clarify] 處理澄清選項: ${clarifyQuery}`);
+  
+  // 根據澄清選項生成對應的詳細問題
+  const clarificationMap = {
+    // 包裹相關
+    'clarify:package_pickup': '如何領取包裹？包裹領取流程是什麼？',
+    'clarify:package_send': '如何寄送包裹？寄包裹的方式有哪些？',
+    'clarify:package_hours': '包裹室的開放時間是什麼時候？',
+    
+    // 管理費相關
+    'clarify:fee_amount': '管理費金額是多少？如何查詢管理費？',
+    'clarify:fee_date': '管理費什麼時候要繳？繳費截止日期？',
+    'clarify:fee_method': '管理費如何繳費？有哪些繳費方式？',
+    
+    // 訪客相關
+    'clarify:visitor_register': '訪客如何登記？訪客登記流程？',
+    'clarify:visitor_parking': '訪客可以停車嗎？訪客停車規定？',
+    'clarify:visitor_hours': '訪客開放時間是什麼時候？',
+    
+    // 設施相關
+    'clarify:facility_rules': '公共設施使用規定是什麼？',
+    'clarify:facility_booking': '如何預約公共設施？預約流程？',
+    'clarify:facility_hours': '公共設施開放時間是什麼時候？',
+    
+    // 其他
+    'clarify:other': '請提供更具體的問題，我會盡力為您解答。'
+  };
+  
+  const detailedQuestion = clarificationMap[clarifyQuery];
+  
+  if (!detailedQuestion) {
+    console.log('[Clarify] 未知的澄清選項，使用通用回應');
+    return {
+      answer: '請提供更詳細的問題，我會為您查詢相關資訊。',
+      normalized_question: clarifyQuery,
+      intent: null,
+      intent_confidence: null,
+      answered: false
+    };
+  }
+  
+  console.log(`[Clarify] 轉換為詳細問題: ${detailedQuestion}`);
+  
+  // 遞歸調用 chat 函數，處理轉換後的詳細問題
+  return await chat(detailedQuestion);
+}
+
 // 正規化問題：去標點、統一小寫、同義詞替換
 function normalizeQuestion(text) {
   // 1. 去除標點符號（保留中英文、數字、空格）
@@ -191,6 +240,13 @@ function classifyIntent(text) {
 // 主要聊天函數
 async function chat(query) {
   console.log(`\n[Query] 問題: ${query}`);
+  
+  // ===== 處理澄清選項回應 =====
+  if (query.startsWith('clarify:')) {
+    console.log('[Clarify] 處理澄清選項回應');
+    return await handleClarificationResponse(query);
+  }
+  
   console.log('[Debug] Step 1: 產生 embedding 前');
   
   // 初始化 chat_log 相關變數

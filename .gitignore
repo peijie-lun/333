@@ -1,5 +1,6 @@
 # 環境變數
 .env
+.env.vercel
 
 # Python 虛擬環境
 __pycache__/
@@ -12,3 +13,5 @@ supabase_embeddings.json
 
 .next/
 node_modules
+
+.vercel

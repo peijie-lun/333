@@ -171,7 +171,41 @@ export async function POST(req) {
           continue;
         }
 
-        // 1️⃣ 公共設施
+        // 1️⃣ 熱門問題排行榜
+        if (userText.includes('熱門問題') || userText.includes('排行榜') || userText.includes('常見問題')) {
+          try {
+            // 使用內部 API 調用
+            const baseUrl = process.env.VERCEL_URL 
+              ? `https://${process.env.VERCEL_URL}` 
+              : 'http://localhost:3000';
+            
+            const popularRes = await fetch(`${baseUrl}/api/popular-questions`);
+            const popularData = await popularRes.json();
+            
+            if (popularData.success && popularData.data?.length > 0) {
+              let rankingMessage = '📊 **熱門問題排行榜** (最近30天)\n\n';
+              
+              popularData.data.slice(0, 5).forEach((item, index) => {
+                const rank = index + 1;
+                const emoji = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
+                const intent = item.intent ? `[${item.intent}]` : '';
+                rankingMessage += `${emoji} ${item.raw_question} ${intent}\n   詢問次數：${item.question_count} 次\n\n`;
+              });
+              
+              rankingMessage += '💡 您也可以直接輸入這些關鍵字來獲得快速回答！';
+              
+              await client.replyMessage(replyToken, { type: 'text', text: rankingMessage });
+            } else {
+              await client.replyMessage(replyToken, { type: 'text', text: '目前還沒有足夠的問題統計資料，請多使用聊天功能！' });
+            }
+          } catch (err) {
+            console.error('❌ 熱門問題查詢失敗:', err);
+            await client.replyMessage(replyToken, { type: 'text', text: '熱門問題查詢失敗，請稍後再試。' });
+          }
+          continue;
+        }
+
+        // 2️⃣ 公共設施
         if (userText.includes('公共設施')) {
           const carouselMessage = {
             type: 'flex',
@@ -303,9 +337,10 @@ export async function POST(req) {
                 items: result.clarificationOptions.map(opt => ({
                   type: 'action',
                   action: {
-                    type: 'message',
+                    type: 'postback',
                     label: opt.label,
-                    text: opt.value  // 使用者點擊後會發送這個 value
+                    data: `action=clarify&value=${opt.value}`,
+                    displayText: opt.label  // 用戶點擊後顯示的文字
                   }
                 }))
               }
@@ -435,7 +470,7 @@ export async function POST(req) {
         }
       }
       
-      // --- 3. 處理 postback 事件（回饋按鈕） ---
+      // --- 3. 處理 postback 事件（回饋按鈕 + 澄清選項） ---
       if (event.type === 'postback') {
         const data = event.postback.data;
         const replyToken = event.replyToken;
@@ -445,10 +480,48 @@ export async function POST(req) {
         // 解析 postback data
         const params = new URLSearchParams(data);
         const action = params.get('action');
+        
+        console.log('[DEBUG Postback] action:', action);
+        
+        // ===== 處理澄清選項 =====
+        if (action === 'clarify') {
+          const clarifyValue = params.get('value');
+          console.log('[DEBUG Postback] clarifyValue:', clarifyValue);
+          
+          try {
+            // 直接呼叫 chat 函數處理澄清選項
+            const result = await chat(clarifyValue);
+            
+            // 根據結果建立回覆訊息（帶回饋按鈕）
+            let replyMessage;
+            if (result.answer) {
+              replyMessage = {
+                type: 'text',
+                text: result.answer.trim()
+              };
+            } else {
+              replyMessage = {
+                type: 'text',
+                text: '抱歉，目前找不到相關資訊。'
+              };
+            }
+            
+            await client.replyMessage(replyToken, replyMessage);
+            continue;
+          } catch (err) {
+            console.error('[Postback Clarify Error]', err);
+            await client.replyMessage(replyToken, { 
+              type: 'text', 
+              text: '查詢失敗，請稍後再試。' 
+            });
+            continue;
+          }
+        }
+        
+        // ===== 處理回饋按鈕 =====
         const chatLogId = params.get('chatLogId');
         const feedbackType = params.get('type');
         
-        console.log('[DEBUG Postback] action:', action);
         console.log('[DEBUG Postback] chatLogId:', chatLogId, 'type:', typeof chatLogId);
         console.log('[DEBUG Postback] feedbackType:', feedbackType);
         
