@@ -105,6 +105,26 @@ export async function POST(req) {
         const replyToken = event.replyToken;
         console.log('📩 使用者輸入:', userText);
 
+        // 🚫 忽略特定的系統提示訊息，不做任何回覆
+        // 移除所有換行和多餘空白來比對
+        const normalizedText = userText.replace(/\s+/g, ' ').trim();
+        
+        const ignorePatterns = [
+          '請輸入您想查詢的問題 例如： ・管理費什麼時候繳？ ・停車位怎麼申請？ ・管委會電話？',
+          '本系統可以: 查詢社區相關問題 查看熱門常見問題 接收推播 如有任何問題，歡迎直接輸入查詢。'
+        ];
+        
+        // 檢查是否匹配任一忽略模式
+        const shouldIgnore = ignorePatterns.some(pattern => {
+          const normalizedPattern = pattern.replace(/\s+/g, ' ').trim();
+          return normalizedText === normalizedPattern || normalizedText.includes(normalizedPattern);
+        });
+        
+        if (shouldIgnore) {
+          console.log('⏭️ 忽略系統提示訊息，不回覆');
+          continue;
+        }
+
         // 0️⃣ 投票訊息
         if (userText.includes('vote:')) {
           try {
@@ -574,6 +594,23 @@ export async function POST(req) {
           console.log('[DEBUG Postback] chatLogIdInt:', chatLogIdInt);
           
           try {
+            // 先檢查是否已經提交過回饋
+            const { data: existingFeedback } = await supabase
+              .from('chat_feedback')
+              .select('id, feedback_type')
+              .eq('chat_log_id', chatLogIdInt)
+              .eq('user_id', userId)
+              .maybeSingle();
+            
+            if (existingFeedback) {
+              console.log('[DEBUG Postback] 用戶已提交過回饋，跳過');
+              await client.replyMessage(replyToken, { 
+                type: 'text', 
+                text: '您已經提交過回饋了，謝謝！😊' 
+              });
+              continue;
+            }
+            
             // 記錄回饋到 chat_feedback
             const { data: insertedFeedback, error: feedbackError } = await supabase
               .from('chat_feedback')
@@ -590,6 +627,11 @@ export async function POST(req) {
             
             if (feedbackError) {
               console.error('[Feedback Error]', feedbackError);
+              await client.replyMessage(replyToken, { 
+                type: 'text', 
+                text: '回饋提交失敗，請稍後再試。' 
+              });
+              continue;
             }
             
             // 更新 chat_log
@@ -629,6 +671,15 @@ export async function POST(req) {
             await client.replyMessage(replyToken, { type: 'text', text: responseText });
           } catch (err) {
             console.error('[Postback Error]', err);
+            // 嘗試回覆錯誤訊息（如果 replyToken 尚未使用）
+            try {
+              await client.replyMessage(replyToken, { 
+                type: 'text', 
+                text: '處理失敗，請稍後再試。' 
+              });
+            } catch (replyErr) {
+              console.error('[Reply Error] replyToken 可能已使用:', replyErr.message);
+            }
           }
         }
       }
