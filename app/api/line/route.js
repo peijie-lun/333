@@ -104,7 +104,17 @@ export async function POST(req) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
         console.log('📩 使用者輸入:', userText);
+        console.log('📩 使用者輸入長度:', userText.length);
+        console.log('📩 包含 📍?:', userText.includes('📍'));
+        console.log('📩 包含 🛠?:', userText.includes('🛠'));
+        console.log('📩 包含 📷?:', userText.includes('📷'));
 
+        // 🚫 優先檢查：如果包含報修相關 emoji，直接跳過
+        if (userText.includes('📍') || userText.includes('🛠') || userText.includes('📷')) {
+          console.log('⏭️ [EMOJI 檢測] 偵測到報修提示 emoji，不回覆');
+          continue;
+        }
+        
         // 🚫 忽略特定的系統提示訊息，不做任何回覆
         // 完全移除空白、換行、標點符號後比對
         const cleanText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
@@ -118,7 +128,10 @@ export async function POST(req) {
           '請上傳照片',
           '上傳照片並輸入',
           '照片並輸入地點',
-          '地點與問題說明'
+          '地點與問題說明',
+          '地點：',
+          '問題：',
+          '上傳照片'
         ];
         
         const shouldIgnore = ignoreKeywords.some(keyword => {
@@ -564,8 +577,20 @@ export async function POST(req) {
         // 2️⃣ 其他問題 → 直接呼叫 chat 函數進行 AI 查詢
         try {
           // 再次檢查是否為系統提示訊息（雙重防護）
+          // 先檢查 emoji
+          if (userText.includes('📍') || userText.includes('🛠') || userText.includes('📷')) {
+            console.log('[AI查詢] 偵測到報修提示 emoji，跳過 AI 查詢');
+            continue;
+          }
+          
           const checkText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
-          const blockKeywords = ['請上傳照片', '上傳照片並輸入', '地點與問題說明', '請輸入您想查詢'];
+          const blockKeywords = [
+            '請上傳照片', 
+            '上傳照片並輸入', 
+            '地點與問題說明', 
+            '請輸入您想查詢',
+            '上傳照片'
+          ];
           
           const shouldBlock = blockKeywords.some(keyword => {
             const cleanKeyword = keyword.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
