@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LINE 圖文選單圖片生成器</title>
+  <style>
+    body {
+      font-family: 'Microsoft JhengHei', sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: #f5f5f5;
+      margin: 0;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      max-width: 800px;
+    }
+    canvas {
+      border: 2px solid #ddd;
+      display: block;
+      margin: 20px auto;
+      max-width: 100%;
+      height: auto;
+    }
+    button {
+      background: #00B900;
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 10px;
+    }
+    button:hover {
+      background: #009900;
+    }
+    .info {
+      background: #e3f2fd;
+      padding: 15px;
+      border-radius: 5px;
+      margin: 20px 0;
+      border-left: 4px solid #2196F3;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎨 LINE 圖文選單圖片生成器</h1>
+    
+    <div class="info">
+      <strong>圖片規格：</strong> 2500 x 1686 像素<br>
+      <strong>選單布局：</strong> 3x2 (6個按鈕)
+    </div>
+
+    <canvas id="canvas" width="2500" height="1686"></canvas>
+    
+    <div style="text-align: center;">
+      <button onclick="downloadImage()">💾 下載圖片</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    const buttons = [
+      { text: '🔧 報修', color: '#FF6B6B', row: 0, col: 0 },
+      { text: '📋 我的報修', color: '#4ECDC4', row: 0, col: 1 },
+      { text: '📊 熱門問題', color: '#45B7D1', row: 0, col: 2 },
+      { text: '🏊 公共設施', color: '#96CEB4', row: 1, col: 0 },
+      { text: '👥 訪客登記', color: '#FFEAA7', row: 1, col: 1 },
+      { text: '📞 聯絡管委會', color: '#DDA15E', row: 1, col: 2 }
+    ];
+
+    function drawMenu() {
+      const buttonWidth = 2500 / 3;
+      const buttonHeight = 1686 / 2;
+
+      buttons.forEach(button => {
+        const x = button.col * buttonWidth;
+        const y = button.row * buttonHeight;
+
+        // 繪製按鈕背景
+        ctx.fillStyle = button.color;
+        ctx.fillRect(x, y, buttonWidth, buttonHeight);
+
+        // 繪製邊框
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(x, y, buttonWidth, buttonHeight);
+
+        // 繪製文字
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 120px Microsoft JhengHei';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(button.text, x + buttonWidth / 2, y + buttonHeight / 2);
+      });
+    }
+
+    function downloadImage() {
+      const link = document.createElement('a');
+      link.download = 'richmenu_image.png';
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+
+    // 初始繪製
+    drawMenu();
+  </script>
+</body>
+</html>

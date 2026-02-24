@@ -106,23 +106,254 @@ export async function POST(req) {
         console.log('📩 使用者輸入:', userText);
 
         // 🚫 忽略特定的系統提示訊息，不做任何回覆
-        // 移除所有換行和多餘空白來比對
-        const normalizedText = userText.replace(/\s+/g, ' ').trim();
+        // 完全移除空白、換行、標點符號後比對
+        const cleanText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
         
-        const ignorePatterns = [
-          '請輸入您想查詢的問題 例如： ・管理費什麼時候繳？ ・停車位怎麼申請？ ・管委會電話？',
-          '本系統可以: 查詢社區相關問題 查看熱門常見問題 接收推播 如有任何問題，歡迎直接輸入查詢。'
+        console.log('[DEBUG] 清理後的文字:', cleanText);
+        
+        // 檢查是否包含忽略關鍵字（更嚴格的匹配）
+        const ignoreKeywords = [
+          '請輸入您想查詢的問題',
+          '本系統可以',
+          '請上傳照片',
+          '上傳照片並輸入',
+          '照片並輸入地點',
+          '地點與問題說明'
         ];
         
-        // 檢查是否匹配任一忽略模式
-        const shouldIgnore = ignorePatterns.some(pattern => {
-          const normalizedPattern = pattern.replace(/\s+/g, ' ').trim();
-          return normalizedText === normalizedPattern || normalizedText.includes(normalizedPattern);
+        const shouldIgnore = ignoreKeywords.some(keyword => {
+          const cleanKeyword = keyword.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
+          const matched = cleanText.includes(cleanKeyword);
+          if (matched) {
+            console.log('[DEBUG] 匹配到忽略關鍵字:', keyword);
+          }
+          return matched;
         });
         
         if (shouldIgnore) {
           console.log('⏭️ 忽略系統提示訊息，不回覆');
           continue;
+        }
+
+        // 🔧 報修系統
+        // 檢查用戶是否在報修流程中
+        const { data: repairSession } = await supabase
+          .from('repair_sessions')
+          .select('*')
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        // 啟動報修流程（精確匹配，避免與「我的報修」衝突）
+        if ((userText === '報修' || userText === '我要報修' || userText === '新報修') && !repairSession) {
+          const repairTypeMessage = {
+            type: 'text',
+            text: '🔧 社區報修系統\n\n請選擇報修類型：',
+            quickReply: {
+              items: [
+                {
+                  type: 'action',
+                  action: {
+                    type: 'message',
+                    label: '💧 水電問題',
+                    text: 'repair_type:水電'
+                  }
+                },
+                {
+                  type: 'action',
+                  action: {
+                    type: 'message',
+                    label: '🛗 電梯問題',
+                    text: 'repair_type:電梯'
+                  }
+                },
+                {
+                  type: 'action',
+                  action: {
+                    type: 'message',
+                    label: '🏊 公共設施',
+                    text: 'repair_type:公共設施'
+                  }
+                },
+                {
+                  type: 'action',
+                  action: {
+                    type: 'message',
+                    label: '🔨 其他',
+                    text: 'repair_type:其他'
+                  }
+                }
+              ]
+            }
+          };
+          
+          await client.replyMessage(replyToken, repairTypeMessage);
+          continue;
+        }
+
+        // 查詢我的報修記錄
+        if (userText.includes('我的報修') || userText.includes('報修記錄') || userText.includes('報修查詢')) {
+          try {
+            const { data: repairs, error } = await supabase
+              .from('repair_requests')
+              .select('*')
+              .eq('user_id', userId)
+              .order('created_at', { ascending: false })
+              .limit(5);
+
+            if (error || !repairs || repairs.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '📋 您目前沒有報修記錄\n\n輸入「報修」可以開始新的報修'
+              });
+              continue;
+            }
+
+            const statusEmoji = {
+              'pending': '⏰ 待處理',
+              'processing': '🔧 處理中',
+              'completed': '✅ 已完成',
+              'cancelled': '❌ 已取消'
+            };
+
+            let recordsText = '📋 您的報修記錄（最近5筆）\n\n';
+            repairs.forEach((repair, index) => {
+              const date = new Date(repair.created_at).toLocaleString('zh-TW', { 
+                month: '2-digit', 
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+              recordsText += `${index + 1}. 單號 #${repair.id}\n`;
+              recordsText += `   ${statusEmoji[repair.status] || repair.status}\n`;
+              recordsText += `   ${repair.repair_type} - ${repair.location}\n`;
+              recordsText += `   ${date}\n\n`;
+            });
+
+            recordsText += '💡 輸入「報修」可開始新的報修';
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: recordsText
+            });
+          } catch (err) {
+            console.error('[報修] 查詢記錄失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試'
+            });
+          }
+          continue;
+        }
+
+        // 處理報修流程的各個步驟
+        if (repairSession) {
+          // 取消報修
+          if (userText === '取消報修' || userText === '取消') {
+            await supabase
+              .from('repair_sessions')
+              .delete()
+              .eq('user_id', userId);
+            
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 已取消報修流程'
+            });
+            continue;
+          }
+
+          // 步驟1: 選擇報修類型
+          if (userText.startsWith('repair_type:')) {
+            const repairType = userText.replace('repair_type:', '');
+            
+            await supabase
+              .from('repair_sessions')
+              .upsert([{
+                user_id: userId,
+                step: 'location',
+                repair_type: repairType,
+                updated_at: new Date().toISOString()
+              }], { onConflict: 'user_id' });
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: `✅ 報修類型：${repairType}\n\n📍 請輸入詳細地點\n例如：3樓電梯、B1停車場、1樓大廳\n\n輸入「取消報修」可中止流程`
+            });
+            continue;
+          }
+
+          // 步驟2: 輸入地點
+          if (repairSession.step === 'location') {
+            await supabase
+              .from('repair_sessions')
+              .update({
+                location: userText,
+                step: 'description',
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', userId);
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: `✅ 地點：${userText}\n\n📝 請描述問題\n例如：水龍頭漏水、電梯按鈕故障\n\n輸入「取消報修」可中止流程`
+            });
+            continue;
+          }
+
+          // 步驟3: 輸入問題描述
+          if (repairSession.step === 'description') {
+            await supabase
+              .from('repair_sessions')
+              .update({
+                description: userText,
+                step: 'photo',
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', userId);
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: `✅ 問題描述：${userText}\n\n📸 請上傳現場照片\n（如不需要上傳照片，請輸入「略過」）\n\n輸入「取消報修」可中止流程`
+            });
+            continue;
+          }
+
+          // 步驟4: 略過照片，直接完成報修
+          if (repairSession.step === 'photo' && (userText === '略過' || userText === '跳過')) {
+            // 建立報修單
+            const { data: newRepair, error: insertError } = await supabase
+              .from('repair_requests')
+              .insert([{
+                user_id: userId,
+                user_name: existingProfile?.line_display_name || '未知',
+                repair_type: repairSession.repair_type,
+                location: repairSession.location,
+                description: repairSession.description,
+                photo_url: null,
+                status: 'pending',
+                created_at: new Date().toISOString()
+              }])
+              .select();
+
+            // 清除 session
+            await supabase
+              .from('repair_sessions')
+              .delete()
+              .eq('user_id', userId);
+
+            if (insertError) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 報修單建立失敗，請稍後再試'
+              });
+            } else {
+              const repairId = newRepair[0].id;
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: `✅ 報修單已送出！\n\n📋 報修單號：#${repairId}\n🔧 類型：${repairSession.repair_type}\n📍 地點：${repairSession.location}\n📝 問題：${repairSession.description}\n⏰ 狀態：待處理\n\n管理單位會盡快處理，謝謝您的通報！`
+              });
+            }
+            continue;
+          }
         }
 
         // 0️⃣ 投票訊息
@@ -332,6 +563,20 @@ export async function POST(req) {
 
         // 2️⃣ 其他問題 → 直接呼叫 chat 函數進行 AI 查詢
         try {
+          // 再次檢查是否為系統提示訊息（雙重防護）
+          const checkText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
+          const blockKeywords = ['請上傳照片', '上傳照片並輸入', '地點與問題說明', '請輸入您想查詢'];
+          
+          const shouldBlock = blockKeywords.some(keyword => {
+            const cleanKeyword = keyword.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
+            return checkText.includes(cleanKeyword);
+          });
+          
+          if (shouldBlock) {
+            console.log('[AI查詢] 偵測到系統提示訊息，跳過 AI 查詢');
+            continue;
+          }
+
           // LINE webhook event 的唯一 ID（有些版本欄位名稱不同）
           const eventId = event.webhookEventId || event.id || `${userId}_${Date.now()}`;
           console.log('[DEBUG] Event ID:', eventId);
@@ -534,7 +779,88 @@ export async function POST(req) {
         }
       }
       
-      // --- 3. 處理 postback 事件（回饋按鈕 + 澄清選項） ---
+      // --- 3. 處理圖片訊息（報修照片上傳） ---
+      if (event.type === 'message' && event.message.type === 'image') {
+        const replyToken = event.replyToken;
+        const messageId = event.message.id;
+
+        // 檢查是否在報修流程的照片步驟
+        const { data: repairSession } = await supabase
+          .from('repair_sessions')
+          .select('*')
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (repairSession && repairSession.step === 'photo') {
+          try {
+            // 取得圖片內容
+            const stream = await client.getMessageContent(messageId);
+            const chunks = [];
+            
+            for await (const chunk of stream) {
+              chunks.push(chunk);
+            }
+            
+            const buffer = Buffer.concat(chunks);
+            const base64Image = buffer.toString('base64');
+            
+            // 這裡可以上傳到 Supabase Storage 或其他圖床
+            // 暫時存成 data URL 格式
+            const photoUrl = `data:image/jpeg;base64,${base64Image.substring(0, 100)}...`; // 實際應用時應上傳到 Storage
+            
+            // 建立報修單
+            const { data: newRepair, error: insertError } = await supabase
+              .from('repair_requests')
+              .insert([{
+                user_id: userId,
+                user_name: existingProfile?.line_display_name || '未知',
+                repair_type: repairSession.repair_type,
+                location: repairSession.location,
+                description: repairSession.description,
+                photo_url: `LINE_MESSAGE:${messageId}`, // 儲存 LINE 訊息 ID，管委會可透過此 ID 取得照片
+                status: 'pending',
+                created_at: new Date().toISOString()
+              }])
+              .select();
+
+            // 清除 session
+            await supabase
+              .from('repair_sessions')
+              .delete()
+              .eq('user_id', userId);
+
+            if (insertError) {
+              console.error('[報修] 建立報修單失敗:', insertError);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 報修單建立失敗，請稍後再試'
+              });
+            } else {
+              const repairId = newRepair[0].id;
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: `✅ 報修單已送出！\n\n📋 報修單號：#${repairId}\n🔧 類型：${repairSession.repair_type}\n📍 地點：${repairSession.location}\n📝 問題：${repairSession.description}\n📸 已附上照片\n⏰ 狀態：待處理\n\n管理單位會盡快處理，謝謝您的通報！`
+              });
+            }
+          } catch (err) {
+            console.error('[報修] 處理照片失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 照片處理失敗，請重新上傳或輸入「略過」'
+            });
+          }
+          continue;
+        }
+
+        // 非報修流程的圖片訊息，回覆提示
+        await client.replyMessage(replyToken, {
+          type: 'text',
+          text: '📸 收到圖片了！\n目前系統主要支援文字查詢。\n如需報修並上傳照片，請先輸入「報修」。'
+        });
+        continue;
+      }
+      
+      // --- 4. 處理 postback 事件（回饋按鈕 + 澄清選項） ---
       if (event.type === 'postback') {
         const data = event.postback.data;
         const replyToken = event.replyToken;
