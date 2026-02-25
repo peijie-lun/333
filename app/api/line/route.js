@@ -158,53 +158,45 @@ export async function POST(req) {
 
         // 啟動報修流程（精確匹配，避免與「我的報修」衝突）
         if ((userText === '報修' || userText === '我要報修' || userText === '新報修') && !repairSession) {
-          const repairTypeMessage = {
+          const buildingMessage = {
             type: 'text',
-            text: '🔧 社區報修系統\n\n請選擇報修類型：',
+            text: '請選擇棟別 👇',
             quickReply: {
               items: [
                 {
                   type: 'action',
                   action: {
                     type: 'message',
-                    label: '💧 水電問題',
-                    text: 'repair_type:水電'
+                    label: 'A棟',
+                    text: 'building:A棟'
                   }
                 },
                 {
                   type: 'action',
                   action: {
                     type: 'message',
-                    label: '🛗 電梯問題',
-                    text: 'repair_type:電梯'
+                    label: 'B棟',
+                    text: 'building:B棟'
                   }
                 },
                 {
                   type: 'action',
                   action: {
                     type: 'message',
-                    label: '🏊 公共設施',
-                    text: 'repair_type:公共設施'
-                  }
-                },
-                {
-                  type: 'action',
-                  action: {
-                    type: 'message',
-                    label: '🔨 其他',
-                    text: 'repair_type:其他'
+                    label: 'C棟',
+                    text: 'building:C棟'
                   }
                 }
               ]
             }
           };
           
-          await client.replyMessage(replyToken, repairTypeMessage);
+          await client.replyMessage(replyToken, buildingMessage);
           continue;
         }
 
-        // 查詢我的報修記錄
-        if (userText.includes('我的報修') || userText.includes('報修記錄') || userText.includes('報修查詢')) {
+        // 查詢我的報修記錄（必須完全匹配，避免與「我要報修」衝突）
+        if (userText === '我的報修' || userText === '報修記錄' || userText === '報修查詢') {
           try {
             const { data: repairs, error } = await supabase
               .from('repair_requests')
@@ -222,8 +214,8 @@ export async function POST(req) {
             }
 
             const statusEmoji = {
-              'pending': '⏰ 待處理',
-              'processing': '🔧 處理中',
+              'pending': '🟡 待處理',
+              'processing': '🔵 處理中',
               'completed': '✅ 已完成',
               'cancelled': '❌ 已取消'
             };
@@ -236,9 +228,9 @@ export async function POST(req) {
                 hour: '2-digit',
                 minute: '2-digit'
               });
-              recordsText += `${index + 1}. 單號 #${repair.id}\n`;
+              recordsText += `${index + 1}. 編號 ${repair.repair_number || '#' + repair.id}\n`;
               recordsText += `   ${statusEmoji[repair.status] || repair.status}\n`;
-              recordsText += `   ${repair.repair_type} - ${repair.location}\n`;
+              recordsText += `   ${repair.building ? repair.building + ' - ' : ''}${repair.location}\n`;
               recordsText += `   ${date}\n\n`;
             });
 
@@ -274,22 +266,22 @@ export async function POST(req) {
             continue;
           }
 
-          // 步驟1: 選擇報修類型
-          if (userText.startsWith('repair_type:')) {
-            const repairType = userText.replace('repair_type:', '');
+          // 步驟1: 選擇棟別
+          if (userText.startsWith('building:')) {
+            const building = userText.replace('building:', '');
             
             await supabase
               .from('repair_sessions')
               .upsert([{
                 user_id: userId,
                 step: 'location',
-                repair_type: repairType,
+                building: building,
                 updated_at: new Date().toISOString()
               }], { onConflict: 'user_id' });
 
             await client.replyMessage(replyToken, {
               type: 'text',
-              text: `✅ 報修類型：${repairType}\n\n📍 請輸入詳細地點\n例如：3樓電梯、B1停車場、1樓大廳\n\n輸入「取消報修」可中止流程`
+              text: `✅ 棟別：${building}\n\n📍 請輸入詳細位置\n例如：3樓走廊、地下室停車場、501室門口\n\n輸入「取消報修」可中止流程`
             });
             continue;
           }
@@ -307,7 +299,7 @@ export async function POST(req) {
 
             await client.replyMessage(replyToken, {
               type: 'text',
-              text: `✅ 地點：${userText}\n\n📝 請描述問題\n例如：水龍頭漏水、電梯按鈕故障\n\n輸入「取消報修」可中止流程`
+              text: `✅ 地點：${userText}\n\n📝 請簡單描述問題狀況\n例如：水龍頭漏水、電梯門無法關閉\n\n輸入「取消報修」可中止流程`
             });
             continue;
           }
@@ -325,20 +317,20 @@ export async function POST(req) {
 
             await client.replyMessage(replyToken, {
               type: 'text',
-              text: `✅ 問題描述：${userText}\n\n📸 請上傳現場照片\n（如不需要上傳照片，請輸入「略過」）\n\n輸入「取消報修」可中止流程`
+              text: `✅ 問題描述：${userText}\n\n� 請上傳問題照片\n（可直接拍照上傳，或輸入「略過」）\n\n輸入「取消報修」可中止流程`
             });
             continue;
           }
 
           // 步驟4: 略過照片，直接完成報修
           if (repairSession.step === 'photo' && (userText === '略過' || userText === '跳過')) {
-            // 建立報修單
+            // 建立報修單（不需要指定 repair_number，資料庫會自動生成）
             const { data: newRepair, error: insertError } = await supabase
               .from('repair_requests')
               .insert([{
                 user_id: userId,
                 user_name: existingProfile?.line_display_name || '未知',
-                repair_type: repairSession.repair_type,
+                building: repairSession.building,
                 location: repairSession.location,
                 description: repairSession.description,
                 photo_url: null,
@@ -354,15 +346,16 @@ export async function POST(req) {
               .eq('user_id', userId);
 
             if (insertError) {
+              console.error('[報修] 建立失敗:', insertError);
               await client.replyMessage(replyToken, {
                 type: 'text',
                 text: '❌ 報修單建立失敗，請稍後再試'
               });
             } else {
-              const repairId = newRepair[0].id;
+              const repairNumber = newRepair[0].repair_number;
               await client.replyMessage(replyToken, {
                 type: 'text',
-                text: `✅ 報修單已送出！\n\n📋 報修單號：#${repairId}\n🔧 類型：${repairSession.repair_type}\n📍 地點：${repairSession.location}\n📝 問題：${repairSession.description}\n⏰ 狀態：待處理\n\n管理單位會盡快處理，謝謝您的通報！`
+                text: `✅ 報修已送出\n📌 編號：${repairNumber}\n目前狀態：🟡 待處理\n\n🏢 棟別：${repairSession.building}\n📍 地點：${repairSession.location}\n📝 問題：${repairSession.description}\n\n管理單位會盡快處理，謝謝您的通報！`
               });
             }
             continue;
@@ -833,13 +826,13 @@ export async function POST(req) {
             // 暫時存成 data URL 格式
             const photoUrl = `data:image/jpeg;base64,${base64Image.substring(0, 100)}...`; // 實際應用時應上傳到 Storage
             
-            // 建立報修單
+            // 建立報修單（不需要指定 repair_number，資料庫會自動生成）
             const { data: newRepair, error: insertError } = await supabase
               .from('repair_requests')
               .insert([{
                 user_id: userId,
                 user_name: existingProfile?.line_display_name || '未知',
-                repair_type: repairSession.repair_type,
+                building: repairSession.building,
                 location: repairSession.location,
                 description: repairSession.description,
                 photo_url: `LINE_MESSAGE:${messageId}`, // 儲存 LINE 訊息 ID，管委會可透過此 ID 取得照片
@@ -861,10 +854,10 @@ export async function POST(req) {
                 text: '❌ 報修單建立失敗，請稍後再試'
               });
             } else {
-              const repairId = newRepair[0].id;
+              const repairNumber = newRepair[0].repair_number;
               await client.replyMessage(replyToken, {
                 type: 'text',
-                text: `✅ 報修單已送出！\n\n📋 報修單號：#${repairId}\n🔧 類型：${repairSession.repair_type}\n📍 地點：${repairSession.location}\n📝 問題：${repairSession.description}\n📸 已附上照片\n⏰ 狀態：待處理\n\n管理單位會盡快處理，謝謝您的通報！`
+                text: `✅ 報修已送出\n📌 編號：${repairNumber}\n目前狀態：🟡 待處理\n\n🏢 棟別：${repairSession.building}\n📍 地點：${repairSession.location}\n📝 問題：${repairSession.description}\n📸 已附上照片\n\n管理單位會盡快處理，謝謝您的通報！`
               });
             }
           } catch (err) {

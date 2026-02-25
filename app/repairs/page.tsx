@@ -4,9 +4,10 @@ import { useState, useEffect } from 'react';
 
 interface RepairRequest {
   id: number;
+  repair_number: string; // 報修編號 R20260224-001
   user_id: string;
   user_name: string;
-  repair_type: string;
+  building: string; // 棟別
   location: string;
   description: string;
   photo_url: string | null;
@@ -163,8 +164,8 @@ export default function RepairManagementPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">單號</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">類型</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">報修編號</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">棟別</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">地點</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">問題描述</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">報修人</th>
@@ -177,11 +178,11 @@ export default function RepairManagementPage() {
             <tbody className="bg-white divide-y divide-gray-200">
               {repairs.map((repair) => (
                 <tr key={repair.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    #{repair.id}
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
+                    {repair.repair_number || `#${repair.id}`}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {repair.repair_type}
+                    {repair.building || '-'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {repair.location}

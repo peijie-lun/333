@@ -1,9 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
+import { Client } from '@line/bot-sdk';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
+
+// LINE Bot SDK 客戶端
+const lineClient = new Client({
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
+});
 
 export const runtime = 'nodejs';
 
@@ -74,6 +81,17 @@ export async function PATCH(req) {
       return Response.json({ error: '缺少報修單 ID' }, { status: 400 });
     }
 
+    // 先獲取當前報修單資訊（用於比對狀態變更和推播通知）
+    const { data: currentRepair } = await supabase
+      .from('repair_requests')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (!currentRepair) {
+      return Response.json({ error: '找不到報修單' }, { status: 404 });
+    }
+
     const updateData = {
       updated_at: new Date().toISOString()
     };
@@ -98,7 +116,51 @@ export async function PATCH(req) {
       return Response.json({ error: error.message }, { status: 400 });
     }
 
-    return Response.json({ success: true, data: data[0] });
+    const updatedRepair = data[0];
+
+    // ===== 狀態變更推播通知 =====
+    if (status && status !== currentRepair.status) {
+      try {
+        const statusEmoji = {
+          'pending': '🟡',
+          'processing': '🔵',
+          'completed': '✅',
+          'cancelled': '❌'
+        };
+
+        const statusText = {
+          'pending': '待處理',
+          'processing': '處理中',
+          'completed': '已完成',
+          'cancelled': '已取消'
+        };
+
+        let notificationText = '';
+
+        if (status === 'processing') {
+          notificationText = `🔔 報修狀態更新\n\n您的報修 ${updatedRepair.repair_number}\n${statusEmoji[status]} 目前狀態：${statusText[status]}\n\n我們正在處理您的報修，請稍候。`;
+        } else if (status === 'completed') {
+          notificationText = `✅ 您的報修已完成\n\n報修編號：${updatedRepair.repair_number}\n感謝您的通報\n\n如有任何問題，歡迎再次聯繫我們。`;
+        } else if (status === 'cancelled') {
+          notificationText = `❌ 報修已取消\n\n報修編號：${updatedRepair.repair_number}\n${notes ? '\n備註：' + notes : ''}`;
+        } else {
+          notificationText = `🔔 報修狀態更新\n\n您的報修 ${updatedRepair.repair_number}\n${statusEmoji[status]} 目前狀態：${statusText[status]}`;
+        }
+
+        // 推播通知給報修的使用者
+        await lineClient.pushMessage(currentRepair.user_id, {
+          type: 'text',
+          text: notificationText
+        });
+
+        console.log(`[報修通知] 已推播給 ${currentRepair.user_id}，狀態：${status}`);
+      } catch (pushError) {
+        console.error('[報修通知] 推播失敗:', pushError);
+        // 推播失敗不影響狀態更新，所以不回傳錯誤
+      }
+    }
+
+    return Response.json({ success: true, data: updatedRepair });
   } catch (err) {
     console.error('PATCH /api/repairs 錯誤:', err);
     return Response.json({ error: '伺服器錯誤' }, { status: 500 });
@@ -109,9 +171,9 @@ export async function PATCH(req) {
 export async function POST(req) {
   try {
     const body = await req.json();
-    const { user_id, user_name, repair_type, location, description, photo_url, priority } = body;
+    const { user_id, user_name, building, location, description, photo_url, priority } = body;
 
-    if (!repair_type || !location || !description) {
+    if (!location || !description) {
       return Response.json({ error: '缺少必要欄位' }, { status: 400 });
     }
 
@@ -120,7 +182,7 @@ export async function POST(req) {
       .insert([{
         user_id: user_id || 'admin',
         user_name: user_name || '管理員',
-        repair_type,
+        building: building || null,
         location,
         description,
         photo_url: photo_url || null,
