@@ -4,16 +4,15 @@ import { useState, useEffect } from 'react';
 
 interface RepairRequest {
   id: number;
-  repair_number: string; // 報修編號 R20260224-001
+  repair_code: string; // 報修編號 R20260224-001
   user_id: string;
-  user_name: string;
+  category: string; // 報修類別
   building: string; // 棟別
   location: string;
   description: string;
-  photo_url: string | null;
   status: 'pending' | 'processing' | 'completed' | 'cancelled';
-  priority: 'low' | 'normal' | 'high' | 'urgent';
-  assigned_to: string | null;
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  satisfaction: number | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -103,14 +102,14 @@ export default function RepairManagementPage() {
 
   const priorityColors = {
     low: 'bg-gray-100 text-gray-600',
-    normal: 'bg-blue-100 text-blue-600',
+    medium: 'bg-blue-100 text-blue-600',
     high: 'bg-orange-100 text-orange-600',
     urgent: 'bg-red-100 text-red-600'
   };
 
   const priorityText = {
     low: '低',
-    normal: '一般',
+    medium: '一般',
     high: '高',
     urgent: '緊急'
   };
@@ -165,10 +164,10 @@ export default function RepairManagementPage() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">報修編號</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">類別</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">棟別</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">地點</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">問題描述</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">報修人</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">優先級</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">狀態</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">建立時間</th>
@@ -179,7 +178,10 @@ export default function RepairManagementPage() {
               {repairs.map((repair) => (
                 <tr key={repair.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
-                    {repair.repair_number || `#${repair.id}`}
+                    {repair.repair_code || `#${repair.id}`}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {repair.category || '-'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {repair.building || '-'}
@@ -190,9 +192,6 @@ export default function RepairManagementPage() {
                   <td className="px-6 py-4 text-sm text-gray-900 max-w-xs truncate">
                     {repair.description}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {repair.user_name}
-                  </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <select
                       value={repair.priority}
@@ -200,7 +199,7 @@ export default function RepairManagementPage() {
                       className={`px-2 py-1 rounded-full text-xs font-semibold ${priorityColors[repair.priority]}`}
                     >
                       <option value="low">低</option>
-                      <option value="normal">一般</option>
+                      <option value="medium">一般</option>
                       <option value="high">高</option>
                       <option value="urgent">緊急</option>
                     </select>

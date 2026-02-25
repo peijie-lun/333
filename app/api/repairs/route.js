@@ -26,7 +26,7 @@ export async function GET(req) {
     // 查詢單一報修單詳情
     if (repairId) {
       const { data, error } = await supabase
-        .from('repair_requests')
+        .from('repairs')
         .select('*')
         .eq('id', repairId)
         .single();
@@ -40,7 +40,7 @@ export async function GET(req) {
 
     // 查詢報修單列表
     let query = supabase
-      .from('repair_requests')
+      .from('repairs')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -83,7 +83,7 @@ export async function PATCH(req) {
 
     // 先獲取當前報修單資訊（用於比對狀態變更和推播通知）
     const { data: currentRepair } = await supabase
-      .from('repair_requests')
+      .from('repairs')
       .select('*')
       .eq('id', id)
       .single();
@@ -107,7 +107,7 @@ export async function PATCH(req) {
     if (notes !== undefined) updateData.notes = notes;
 
     const { data, error } = await supabase
-      .from('repair_requests')
+      .from('repairs')
       .update(updateData)
       .eq('id', id)
       .select();
@@ -138,13 +138,13 @@ export async function PATCH(req) {
         let notificationText = '';
 
         if (status === 'processing') {
-          notificationText = `🔔 報修狀態更新\n\n您的報修 ${updatedRepair.repair_number}\n${statusEmoji[status]} 目前狀態：${statusText[status]}\n\n我們正在處理您的報修，請稍候。`;
+          notificationText = `🔔 報修狀態更新\n\n您的報修 ${updatedRepair.repair_code}\n${statusEmoji[status]} 目前狀態：${statusText[status]}\n\n我們正在處理您的報修，請稍候。`;
         } else if (status === 'completed') {
-          notificationText = `✅ 您的報修已完成\n\n報修編號：${updatedRepair.repair_number}\n感謝您的通報\n\n如有任何問題，歡迎再次聯繫我們。`;
+          notificationText = `✅ 您的報修已完成\n\n報修編號：${updatedRepair.repair_code}\n感謝您的通報\n\n如有任何問題，歡迎再次聯繫我們。`;
         } else if (status === 'cancelled') {
-          notificationText = `❌ 報修已取消\n\n報修編號：${updatedRepair.repair_number}\n${notes ? '\n備註：' + notes : ''}`;
+          notificationText = `❌ 報修已取消\n\n報修編號：${updatedRepair.repair_code}\n${notes ? '\n備註：' + notes : ''}`;
         } else {
-          notificationText = `🔔 報修狀態更新\n\n您的報修 ${updatedRepair.repair_number}\n${statusEmoji[status]} 目前狀態：${statusText[status]}`;
+          notificationText = `🔔 報修狀態更新\n\n您的報修 ${updatedRepair.repair_code}\n${statusEmoji[status]} 目前狀態：${statusText[status]}`;
         }
 
         // 推播通知給報修的使用者
@@ -171,24 +171,31 @@ export async function PATCH(req) {
 export async function POST(req) {
   try {
     const body = await req.json();
-    const { user_id, user_name, building, location, description, photo_url, priority } = body;
+    const { user_id, building, location, description, category, priority } = body;
 
     if (!location || !description) {
       return Response.json({ error: '缺少必要欄位' }, { status: 400 });
     }
 
+    // 生成報修編號
+    const today = new Date();
+    const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+    const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    const repairCode = `R${dateStr}-${randomNum}`;
+
     const { data, error } = await supabase
-      .from('repair_requests')
+      .from('repairs')
       .insert([{
+        repair_code: repairCode,
         user_id: user_id || 'admin',
-        user_name: user_name || '管理員',
-        building: building || null,
+        category: category || '一般報修',
+        building: building || '未指定',
         location,
         description,
-        photo_url: photo_url || null,
-        priority: priority || 'normal',
+        priority: priority || 'medium',
         status: 'pending',
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       }])
       .select();
 
@@ -207,7 +214,7 @@ export async function POST(req) {
 export async function DELETE(req) {
   try {
     const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
+    const id = sear.get('id');
 
     if (!id) {
       return Response.json({ error: '缺少報修單 ID' }, { status: 400 });
