@@ -150,23 +150,34 @@ export async function POST(req) {
 
         // 🔧 報修系統
         // 檢查用戶是否在報修流程中（草稿狀態）
-        const { data: draftRepair } = await supabase
+        const { data: draftRepair, error: draftError } = await supabase
           .from('repairs')
           .select('*')
           .eq('user_id', userId)
           .eq('status', 'draft')
           .maybeSingle();
 
+        console.log('[報修] 查詢草稿結果:', { userId, draftRepair, draftError });
+
         // 啟動報修流程（精確匹配，避免與「我的報修」衝突）
         if ((userText === '報修' || userText === '我要報修' || userText === '新報修') && !draftRepair) {
+          // 先刪除該使用者的舊草稿（如果有）
+          await supabase
+            .from('repairs')
+            .delete()
+            .eq('user_id', userId)
+            .eq('status', 'draft');
+
           // 生成報修編號
           const today = new Date();
           const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
           const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
           const repairCode = `R${dateStr}-${randomNum}`;
 
+          console.log('[報修] 建立新草稿:', { userId, repairCode });
+
           // 直接在 repairs 表建立草稿記錄
-          await supabase
+          const { data: newDraft, error: insertError } = await supabase
             .from('repairs')
             .insert([{
               user_id: userId,
@@ -176,7 +187,19 @@ export async function POST(req) {
               priority: 'medium',
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
-            }]);
+            }])
+            .select();
+
+          console.log('[報修] 草稿建立結果:', { newDraft, insertError });
+
+          if (insertError) {
+            console.error('[報修] 建立草稿失敗:', insertError);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 報修功能暫時無法使用，請稍後再試'
+            });
+            continue;
+          }
 
           await client.replyMessage(replyToken, {
             type: 'text',
@@ -243,6 +266,12 @@ export async function POST(req) {
 
         // 處理報修流程的各個步驟
         if (draftRepair) {
+          console.log('[報修] 進入報修流程處理:', { 
+            userText, 
+            location: draftRepair.location, 
+            description: draftRepair.description 
+          });
+
           // 取消報修
           if (userText === '取消報修' || userText === '取消') {
             await supabase
@@ -322,6 +351,14 @@ export async function POST(req) {
             }
             continue;
           }
+
+          // 步驟3: 等待照片上傳，任何其他輸入都提示上傳照片或略過（兜底邏輯）
+          // 這確保有草稿時一定不會執行到 AI 查詢
+          await client.replyMessage(replyToken, {
+            type: 'text',
+            text: '📷 請上傳問題照片\n或輸入「略過」跳過照片上傳\n\n您也可以輸入「取消報修」中止流程'
+          });
+          continue;
         }
 
         // 0️⃣ 投票訊息
