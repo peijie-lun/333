@@ -184,6 +184,7 @@ export async function POST(req) {
               repair_code: repairCode,
               status: 'draft',
               category: '一般報修',
+              building: '未指定',  // 提供預設值以符合 NOT NULL 約束
               priority: 'medium',
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
