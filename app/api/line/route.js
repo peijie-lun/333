@@ -160,8 +160,8 @@ export async function POST(req) {
         console.log('[報修] 查詢草稿結果:', { userId, draftRepair, draftError });
 
         // 啟動報修流程（精確匹配，避免與「我的報修」衝突）
-        if ((userText === '報修' || userText === '我要報修' || userText === '新報修') && !draftRepair) {
-          // 先刪除該使用者的舊草稿（如果有）
+        if (userText === '報修' || userText === '我要報修' || userText === '新報修') {
+          // 先刪除該使用者的舊草稿（不管有沒有都刪除，確保重新開始）
           await supabase
             .from('repairs')
             .delete()
@@ -270,7 +270,9 @@ export async function POST(req) {
           console.log('[報修] 進入報修流程處理:', { 
             userText, 
             location: draftRepair.location, 
-            description: draftRepair.description 
+            description: draftRepair.description,
+            hasLocation: !!draftRepair.location,
+            hasDescription: !!draftRepair.description
           });
 
           // 取消報修
@@ -290,6 +292,7 @@ export async function POST(req) {
 
           // 步驟1: 輸入地點
           if (!draftRepair.location) {
+            console.log('[報修] 步驟1: 儲存地點');
             await supabase
               .from('repairs')
               .update({
@@ -306,8 +309,9 @@ export async function POST(req) {
             continue;
           }
 
-          // 步驟2: 輸入問題描述
+          // 步驟2: 輸入問題描述  
           if (draftRepair.location && !draftRepair.description) {
+            console.log('[報修] 步驟2: 儲存描述');
             await supabase
               .from('repairs')
               .update({
@@ -326,6 +330,7 @@ export async function POST(req) {
 
           // 步驟3: 略過照片，直接完成報修
           if (draftRepair.location && draftRepair.description && (userText === '略過' || userText === '跳過')) {
+            console.log('[報修] 步驟3: 略過照片，提交報修');
             // 更新草稿為正式報修
             const { data: completedRepair, error: updateError } = await supabase
               .from('repairs')
@@ -343,18 +348,20 @@ export async function POST(req) {
                 type: 'text',
                 text: '❌ 報修單提交失敗，請稍後再試'
               });
-            } else {
-              const repair = completedRepair[0];
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: `✅ 報修已送出\n📌 編號：${repair.repair_code}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.location}\n📝 問題：${repair.description}\n\n管理單位會盡快處理，謝謝您的通報！`
-              });
+              continue;  // 重要：失敗也要 continue
             }
+            
+            const repair = completedRepair[0];
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: `✅ 報修已送出\n📌 編號：${repair.repair_code}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.location}\n📝 問題：${repair.description}\n\n管理單位會盡快處理，謝謝您的通報！`
+            });
             continue;
           }
 
           // 步驟3: 等待照片上傳，任何其他輸入都提示上傳照片或略過（兜底邏輯）
           // 這確保有草稿時一定不會執行到 AI 查詢
+          console.log('[報修] 兜底邏輯: 提示上傳照片');
           await client.replyMessage(replyToken, {
             type: 'text',
             text: '📷 請上傳問題照片\n或輸入「略過」跳過照片上傳\n\n您也可以輸入「取消報修」中止流程'
