@@ -114,42 +114,17 @@ export async function POST(req) {
           console.log('⏭️ [EMOJI 檢測] 偵測到報修提示 emoji，不回覆');
           continue;
         }
-        
-        // 🚫 忽略特定的系統提示訊息，不做任何回覆
-        // 完全移除空白、換行、標點符號後比對
-        const cleanText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
-        
-        console.log('[DEBUG] 清理後的文字:', cleanText);
-        
-        // 檢查是否包含忽略關鍵字（更嚴格的匹配）
-        const ignoreKeywords = [
-          '請輸入您想查詢的問題',
-          '本系統可以',
-          '請上傳照片',
-          '上傳照片並輸入',
-          '照片並輸入地點',
-          '地點與問題說明',
-          '地點：',
-          '問題：',
-          '上傳照片'
-        ];
-        
-        const shouldIgnore = ignoreKeywords.some(keyword => {
-          const cleanKeyword = keyword.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
-          const matched = cleanText.includes(cleanKeyword);
-          if (matched) {
-            console.log('[DEBUG] 匹配到忽略關鍵字:', keyword);
-          }
-          return matched;
-        });
-        
-        if (shouldIgnore) {
-          console.log('⏭️ 忽略系統提示訊息，不回覆');
-          continue;
-        }
 
-        // 1️⃣ 熱門問題排行榜（優先處理，避免被其他檢查擋住）
+        console.log('🔍 [DEBUG] 準備檢查熱門問題...');
+        console.log('🔍 [DEBUG] userText 值:', userText);
+        console.log('🔍 [DEBUG] userText 型別:', typeof userText);
+        console.log('🔍 [DEBUG] 包含「熱門問題」?', userText.includes('熱門問題'));
+        console.log('🔍 [DEBUG] 包含「排行榜」?', userText.includes('排行榜'));
+        console.log('🔍 [DEBUG] 包含「常見問題」?', userText.includes('常見問題'));
+
+        // 1️⃣ 熱門問題排行榜（最優先處理，避免被關鍵字過濾擋住）
         if (userText.includes('熱門問題') || userText.includes('排行榜') || userText.includes('常見問題')) {
+          console.log('✅ [熱門問題] 進入熱門問題處理邏輯');
           try {
             // 直接在這裡查詢數據庫，避免 API 調用問題
             const { data, error } = await supabase
@@ -226,7 +201,38 @@ export async function POST(req) {
           continue;
         }
 
-        // 🔧 報修系統
+        // � 忽略特定的系統提示訊息，不做任何回覆
+        // 完全移除空白、換行、標點符號後比對
+        const cleanText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
+        
+        console.log('[DEBUG] 清理後的文字:', cleanText);
+        
+        // 檢查是否包含忽略關鍵字（更嚴格的匹配）
+        const ignoreKeywords = [
+          '本系統可以',
+          '請上傳照片',
+          '上傳照片並輸入',
+          '照片並輸入地點',
+          '地點與問題說明',
+          '地點：',
+          '上傳照片'
+        ];
+        
+        const shouldIgnore = ignoreKeywords.some(keyword => {
+          const cleanKeyword = keyword.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
+          const matched = cleanText.includes(cleanKeyword);
+          if (matched) {
+            console.log('[DEBUG] 匹配到忽略關鍵字:', keyword);
+          }
+          return matched;
+        });
+        
+        if (shouldIgnore) {
+          console.log('⏭️ 忽略系統提示訊息，不回覆');
+          continue;
+        }
+
+        // �🔧 報修系統
         // 檢查用戶是否在報修流程中（草稿狀態）
         const { data: draftRepair, error: draftError } = await supabase
           .from('repairs')
