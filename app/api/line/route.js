@@ -391,10 +391,15 @@ export async function POST(req) {
 
             console.log('[報修] 地點更新結果:', { updatedData, updateError });
 
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: '📝 請簡單描述問題狀況'
-            });
+            try {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '📝 請簡單描述問題狀況'
+              });
+              console.log('[報修] 步驟1: 訊息回覆成功');
+            } catch (replyErr) {
+              console.error('[報修] 步驟1: 訊息回覆失敗 (replyToken 可能已使用):', replyErr.message);
+            }
             continue;
           }
 
@@ -414,10 +419,15 @@ export async function POST(req) {
 
             console.log('[報修] 描述更新結果:', { updatedData, updateError });
 
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: `✅ 問題描述：${userText}\n\n📸 請上傳問題照片\n（可直接拍照上傳，或輸入「略過」）\n\n輸入「取消報修」可中止流程`
-            });
+            try {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: `✅ 問題描述：${userText}\n\n📸 請上傳問題照片\n（可直接拍照上傳，或輸入「略過」）\n\n輸入「取消報修」可中止流程`
+              });
+              console.log('[報修] 步驟2: 訊息回覆成功');
+            } catch (replyErr) {
+              console.error('[報修] 步驟2: 訊息回覆失敗 (replyToken 可能已使用):', replyErr.message);
+            }
             continue;
           }
 
