@@ -269,6 +269,8 @@ export async function POST(req) {
               status: 'draft',
               category: '一般報修',
               building: '未指定',  // 提供預設值以符合 NOT NULL 約束
+              location: null,  // 明確設為 null
+              description: null,  // 明確設為 null
               priority: 'medium',
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
@@ -376,15 +378,18 @@ export async function POST(req) {
 
           // 步驟1: 輸入地點
           if (!draftRepair.location) {
-            console.log('[報修] 步驟1: 儲存地點');
-            await supabase
+            console.log('[報修] 步驟1: 儲存地點:', userText);
+            const { data: updatedData, error: updateError } = await supabase
               .from('repairs')
               .update({
                 location: userText,
                 updated_at: new Date().toISOString()
               })
               .eq('user_id', userId)
-              .eq('status', 'draft');
+              .eq('status', 'draft')
+              .select();
+
+            console.log('[報修] 地點更新結果:', { updatedData, updateError });
 
             await client.replyMessage(replyToken, {
               type: 'text',
@@ -395,19 +400,23 @@ export async function POST(req) {
 
           // 步驟2: 輸入問題描述  
           if (draftRepair.location && !draftRepair.description) {
-            console.log('[報修] 步驟2: 儲存描述');
-            await supabase
+            console.log('[報修] 步驟2: 儲存描述:', userText);
+            console.log('[報修] 當前地點:', draftRepair.location);
+            const { data: updatedData, error: updateError } = await supabase
               .from('repairs')
               .update({
                 description: userText,
                 updated_at: new Date().toISOString()
               })
               .eq('user_id', userId)
-              .eq('status', 'draft');
+              .eq('status', 'draft')
+              .select();
+
+            console.log('[報修] 描述更新結果:', { updatedData, updateError });
 
             await client.replyMessage(replyToken, {
               type: 'text',
-              text: `✅ 問題描述：${userText}\n\n� 請上傳問題照片\n（可直接拍照上傳，或輸入「略過」）\n\n輸入「取消報修」可中止流程`
+              text: `✅ 問題描述：${userText}\n\n📸 請上傳問題照片\n（可直接拍照上傳，或輸入「略過」）\n\n輸入「取消報修」可中止流程`
             });
             continue;
           }
@@ -415,6 +424,11 @@ export async function POST(req) {
           // 步驟3: 略過照片，直接完成報修
           if (draftRepair.location && draftRepair.description && (userText === '略過' || userText === '跳過')) {
             console.log('[報修] 步驟3: 略過照片，提交報修');
+            console.log('[報修] 提交前資料確認:', {
+              location: draftRepair.location,
+              description: draftRepair.description,
+              repair_code: draftRepair.repair_code
+            });
             // 更新草稿為正式報修
             const { data: completedRepair, error: updateError } = await supabase
               .from('repairs')
