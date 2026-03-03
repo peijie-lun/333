@@ -830,14 +830,26 @@ export async function POST(req) {
         const messageId = event.message.id;
 
         // 檢查是否在報修流程中（草稿狀態且已填寫地點和描述）
-        const { data: draftRepair } = await supabase
+        const { data: draftRepair, error: draftError } = await supabase
           .from('repairs')
           .select('*')
           .eq('user_id', userId)
           .eq('status', 'draft')
           .maybeSingle();
 
-        if (draftRepair && draftRepair.location && draftRepair.description) {
+        console.log('[報修-圖片] 草稿狀態:', {
+          hasDraft: !!draftRepair,
+          location: draftRepair?.location,
+          description: draftRepair?.description,
+          error: draftError
+        });
+
+        // 檢查草稿是否完整（地點和描述都不是 null、空字串或純空白）
+        const hasLocation = draftRepair?.location && draftRepair.location.trim() !== '';
+        const hasDescription = draftRepair?.description && draftRepair.description.trim() !== '';
+
+        if (draftRepair && hasLocation && hasDescription) {
+          console.log('[報修-圖片] ✅ 草稿完整，開始提交報修');
           try {
             // 更新草稿為正式報修
             const { data: completedRepair, error: updateError } = await supabase
@@ -851,7 +863,7 @@ export async function POST(req) {
               .select();
 
             if (updateError || !completedRepair || completedRepair.length === 0) {
-              console.error('[報修] 提交報修單失敗:', updateError);
+              console.error('[報修-圖片] 提交報修單失敗:', updateError);
               await client.replyMessage(replyToken, {
                 type: 'text',
                 text: '❌ 報修單提交失敗，請稍後再試'
@@ -872,15 +884,17 @@ export async function POST(req) {
               }]);
 
             if (imageError) {
-              console.error('[報修] 圖片儲存失敗:', imageError);
+              console.error('[報修-圖片] 圖片儲存失敗:', imageError);
             }
+
+            console.log('[報修-圖片] ✅ 報修提交成功:', repair.repair_code);
 
             await client.replyMessage(replyToken, {
               type: 'text',
               text: `✅ 報修已送出\n📌 編號：${repair.repair_code}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.location}\n📝 問題：${repair.description}\n📸 已附上照片\n\n管理單位會盡快處理，謝謝您的通報！`
             });
           } catch (err) {
-            console.error('[報修] 處理照片失敗:', err);
+            console.error('[報修-圖片] 處理照片失敗:', err);
             await client.replyMessage(replyToken, {
               type: 'text',
               text: '❌ 照片處理失敗，請重新上傳或輸入「略過」'
@@ -890,6 +904,7 @@ export async function POST(req) {
         }
 
         // 非報修流程的圖片訊息，回覆提示
+        console.log('[報修-圖片] ❌ 非報修流程或草稿不完整');
         await client.replyMessage(replyToken, {
           type: 'text',
           text: '📸 收到圖片了！\n目前系統主要支援文字查詢。\n如需報修並上傳照片，請先輸入「報修」。'
