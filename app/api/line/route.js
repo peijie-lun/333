@@ -885,20 +885,29 @@ export async function POST(req) {
 
             if (imageError) {
               console.error('[報修-圖片] 圖片儲存失敗:', imageError);
+              // 圖片儲存失敗不影響報修提交，繼續回覆成功訊息
             }
 
             console.log('[報修-圖片] ✅ 報修提交成功:', repair.repair_code);
 
+            // 回覆成功訊息
             await client.replyMessage(replyToken, {
               type: 'text',
               text: `✅ 報修已送出\n📌 編號：${repair.repair_code}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.location}\n📝 問題：${repair.description}\n📸 已附上照片\n\n管理單位會盡快處理，謝謝您的通報！`
             });
+            
+            console.log('[報修-圖片] ✅ 訊息回覆成功');
           } catch (err) {
             console.error('[報修-圖片] 處理照片失敗:', err);
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: '❌ 照片處理失敗，請重新上傳或輸入「略過」'
-            });
+            // 只有在還沒回覆的情況下才嘗試回覆錯誤訊息
+            try {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 照片處理失敗，請稍後再試'
+              });
+            } catch (replyErr) {
+              console.error('[報修-圖片] 無法回覆錯誤訊息（replyToken 可能已使用）:', replyErr.message);
+            }
           }
           continue;
         }
