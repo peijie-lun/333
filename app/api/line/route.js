@@ -817,6 +817,12 @@ export async function POST(req) {
         const replyToken = event.replyToken;
         const messageId = event.message.id;
 
+        console.log('[報修-圖片] ==================== 開始處理圖片 ====================');
+        console.log('[報修-圖片] userId:', userId);
+        console.log('[報修-圖片] messageId:', messageId);
+        console.log('[報修-圖片] repairSessions 總數:', repairSessions.size);
+        console.log('[報修-圖片] 所有 sessions:', Array.from(repairSessions.entries()));
+
         // 檢查是否在報修流程中（已填寫地點和描述）
         const currentSession = repairSessions.get(userId);
 
@@ -909,8 +915,60 @@ export async function POST(req) {
           continue;
         }
 
+        // 沒有 session，檢查是否有最近提交的報修單（5分鐘內）
+        console.log('[報修-圖片] 沒有 session，檢查最近的報修單');
+        try {
+          const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+          const { data: recentRepairs, error: queryError } = await supabase
+            .from('repairs')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('status', 'pending')
+            .gte('created_at', fiveMinutesAgo)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (queryError) {
+            console.error('[報修-圖片] 查詢最近報修失敗:', queryError);
+            throw queryError;
+          }
+
+          if (recentRepairs && recentRepairs.length > 0) {
+            const repair = recentRepairs[0];
+            console.log('[報修-圖片] 找到最近的報修單:', repair.repair_code);
+
+            // 將圖片附加到這個報修單
+            const imageUrl = `LINE_MESSAGE:${messageId}`;
+            const { error: imageError } = await supabase
+              .from('repair_images')
+              .insert([{
+                repair_id: repair.id,
+                image_url: imageUrl,
+                created_at: new Date().toISOString()
+              }]);
+
+            if (imageError) {
+              console.error('[報修-圖片] 圖片儲存失敗:', imageError);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 照片上傳失敗，請稍後再試'
+              });
+              continue;
+            }
+
+            console.log('[報修-圖片] ✅ 圖片已附加到報修單');
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: `✅ 報修已送出\n📌 編號：${repair.repair_code}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.location}\n📝 問題：${repair.description}\n📸 已附上照片\n\n管理單位會盡快處理，謝謝您的通報！`
+            });
+            continue;
+          }
+        } catch (err) {
+          console.error('[報修-圖片] 處理最近報修單失敗:', err);
+        }
+
         // 非報修流程的圖片訊息，回覆提示
-        console.log('[報修-圖片] ❌ 非報修流程或 session 不完整');
+        console.log('[報修-圖片] ❌ 非報修流程或找不到相關報修單');
         await client.replyMessage(replyToken, {
           type: 'text',
           text: '📸 收到圖片了！\n目前系統主要支援文字查詢。\n如需報修並上傳照片，請先輸入「報修」。'
