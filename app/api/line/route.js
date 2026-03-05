@@ -17,6 +17,10 @@ const lineConfig = {
 
 const client = new Client(lineConfig);// LINE Bot SDK 客戶端
 
+// 記憶體暫存報修會話資料（取代資料庫草稿）
+const repairSessions = new Map();
+// 結構：{ userId: { location: string, description: string, startTime: timestamp } }
+
 // 移除圖片關鍵字攔截，讓所有查詢都進入 AI 處理
 // const IMAGE_KEYWORDS = ['圖片', '設施', '游泳池', '健身房', '大廳'];
 // 處理 LINE Webhook 請求
@@ -233,65 +237,36 @@ export async function POST(req) {
         }
 
         // �🔧 報修系統
-        // 檢查用戶是否在報修流程中（草稿狀態）
-        const { data: draftRepair, error: draftError } = await supabase
-          .from('repairs')
-          .select('*')
-          .eq('user_id', userId)
-          .eq('status', 'draft')
-          .maybeSingle();
-
-        console.log('[報修] 查詢草稿結果:', { userId, draftRepair, draftError });
+        // 檢查用戶是否在報修流程中
+        const currentSession = repairSessions.get(userId);
+        
+        console.log('[報修] Session 狀態:', { 
+          userId, 
+          hasSession: !!currentSession,
+          location: currentSession?.location,
+          description: currentSession?.description
+        });
 
         // 啟動報修流程（精確匹配，避免與「我的報修」衝突）
         if (userText === '報修' || userText === '我要報修' || userText === '新報修') {
-          // 先刪除該使用者的舊草稿（不管有沒有都刪除，確保重新開始）
-          await supabase
-            .from('repairs')
-            .delete()
-            .eq('user_id', userId)
-            .eq('status', 'draft');
+          // 初始化新的報修 session
+          repairSessions.set(userId, {
+            location: null,
+            description: null,
+            startTime: Date.now()
+          });
 
-          // 生成報修編號
-          const today = new Date();
-          const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
-          const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-          const repairCode = `R${dateStr}-${randomNum}`;
+          console.log('[報修] 啟動新報修流程');
 
-          console.log('[報修] 建立新草稿:', { userId, repairCode });
-
-          // 直接在 repairs 表建立草稿記錄
-          const { data: newDraft, error: insertError } = await supabase
-            .from('repairs')
-            .insert([{
-              user_id: userId,
-              repair_code: repairCode,
-              status: 'draft',
-              category: '一般報修',
-              building: '未指定',  // 提供預設值以符合 NOT NULL 約束
-              location: null,  // 明確設為 null
-              description: null,  // 明確設為 null
-              priority: 'medium',
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            }])
-            .select();
-
-          console.log('[報修] 草稿建立結果:', { newDraft, insertError });
-
-          if (insertError) {
-            console.error('[報修] 建立草稿失敗:', insertError);
+          try {
             await client.replyMessage(replyToken, {
               type: 'text',
-              text: '❌ 報修功能暫時無法使用，請稍後再試'
+              text: '📍 請輸入地點'
             });
-            continue;
+            console.log('[報修] 啟動流程: 訊息回覆成功');
+          } catch (replyErr) {
+            console.error('[報修] 啟動流程: 訊息回覆失敗:', replyErr.message);
           }
-
-          await client.replyMessage(replyToken, {
-            type: 'text',
-            text: '📍 請輸入地點'
-          });
           continue;
         }
 
@@ -302,7 +277,7 @@ export async function POST(req) {
               .from('repairs')
               .select('*')
               .eq('user_id', userId)
-              .neq('status', 'draft')  // 排除草稿
+              .in('status', ['pending', 'processing', 'completed', 'cancelled'])  // 只顯示已提交的報修
               .order('created_at', { ascending: false })
               .limit(5);
 
@@ -352,22 +327,18 @@ export async function POST(req) {
         }
 
         // 處理報修流程的各個步驟
-        if (draftRepair) {
+        if (currentSession) {
           console.log('[報修] 進入報修流程處理:', { 
             userText, 
-            location: draftRepair.location, 
-            description: draftRepair.description,
-            hasLocation: !!draftRepair.location,
-            hasDescription: !!draftRepair.description
+            location: currentSession.location, 
+            description: currentSession.description,
+            hasLocation: !!currentSession.location,
+            hasDescription: !!currentSession.description
           });
 
           // 取消報修
           if (userText === '取消報修' || userText === '取消') {
-            await supabase
-              .from('repairs')
-              .delete()
-              .eq('user_id', userId)
-              .eq('status', 'draft');
+            repairSessions.delete(userId);
             
             await client.replyMessage(replyToken, {
               type: 'text',
@@ -377,19 +348,14 @@ export async function POST(req) {
           }
 
           // 步驟1: 輸入地點
-          if (!draftRepair.location) {
+          if (!currentSession.location) {
             console.log('[報修] 步驟1: 儲存地點:', userText);
-            const { data: updatedData, error: updateError } = await supabase
-              .from('repairs')
-              .update({
-                location: userText,
-                updated_at: new Date().toISOString()
-              })
-              .eq('user_id', userId)
-              .eq('status', 'draft')
-              .select();
+            repairSessions.set(userId, {
+              ...currentSession,
+              location: userText
+            });
 
-            console.log('[報修] 地點更新結果:', { updatedData, updateError });
+            console.log('[報修] 地點已儲存到 session');
 
             try {
               await client.replyMessage(replyToken, {
@@ -398,26 +364,21 @@ export async function POST(req) {
               });
               console.log('[報修] 步驟1: 訊息回覆成功');
             } catch (replyErr) {
-              console.error('[報修] 步驟1: 訊息回覆失敗 (replyToken 可能已使用):', replyErr.message);
+              console.error('[報修] 步驟1: 訊息回覆失敗:', replyErr.message);
             }
             continue;
           }
 
           // 步驟2: 輸入問題描述  
-          if (draftRepair.location && !draftRepair.description) {
+          if (currentSession.location && !currentSession.description) {
             console.log('[報修] 步驟2: 儲存描述:', userText);
-            console.log('[報修] 當前地點:', draftRepair.location);
-            const { data: updatedData, error: updateError } = await supabase
-              .from('repairs')
-              .update({
-                description: userText,
-                updated_at: new Date().toISOString()
-              })
-              .eq('user_id', userId)
-              .eq('status', 'draft')
-              .select();
+            console.log('[報修] 當前地點:', currentSession.location);
+            repairSessions.set(userId, {
+              ...currentSession,
+              description: userText
+            });
 
-            console.log('[報修] 描述更新結果:', { updatedData, updateError });
+            console.log('[報修] 描述已儲存到 session');
 
             try {
               await client.replyMessage(replyToken, {
@@ -426,38 +387,55 @@ export async function POST(req) {
               });
               console.log('[報修] 步驟2: 訊息回覆成功');
             } catch (replyErr) {
-              console.error('[報修] 步驟2: 訊息回覆失敗 (replyToken 可能已使用):', replyErr.message);
+              console.error('[報修] 步驟2: 訊息回覆失敗:', replyErr.message);
             }
             continue;
           }
 
           // 步驟3: 略過照片，直接完成報修
-          if (draftRepair.location && draftRepair.description && (userText === '略過' || userText === '跳過')) {
+          if (currentSession.location && currentSession.description && (userText === '略過' || userText === '跳過')) {
             console.log('[報修] 步驟3: 略過照片，提交報修');
+            
+            // 生成報修編號
+            const today = new Date();
+            const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+            const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+            const repairCode = `R${dateStr}-${randomNum}`;
+            
             console.log('[報修] 提交前資料確認:', {
-              location: draftRepair.location,
-              description: draftRepair.description,
-              repair_code: draftRepair.repair_code
+              location: currentSession.location,
+              description: currentSession.description,
+              repair_code: repairCode
             });
-            // 更新草稿為正式報修
-            const { data: completedRepair, error: updateError } = await supabase
+            
+            // 直接寫入資料庫為 pending 狀態（不使用草稿）
+            const { data: completedRepair, error: insertError } = await supabase
               .from('repairs')
-              .update({
+              .insert([{
+                user_id: userId,
+                repair_code: repairCode,
                 status: 'pending',
+                category: '一般報修',
+                building: '未指定',
+                location: currentSession.location,
+                description: currentSession.description,
+                priority: 'medium',
+                created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
-              })
-              .eq('user_id', userId)
-              .eq('status', 'draft')
+              }])
               .select();
 
-            if (updateError || !completedRepair || completedRepair.length === 0) {
-              console.error('[報修] 提交失敗:', updateError);
+            if (insertError || !completedRepair || completedRepair.length === 0) {
+              console.error('[報修] 提交失敗:', insertError);
               await client.replyMessage(replyToken, {
                 type: 'text',
                 text: '❌ 報修單提交失敗，請稍後再試'
               });
-              continue;  // 重要：失敗也要 continue
+              continue;
             }
+            
+            // 清除 session
+            repairSessions.delete(userId);
             
             const repair = completedRepair[0];
             await client.replyMessage(replyToken, {
@@ -468,7 +446,7 @@ export async function POST(req) {
           }
 
           // 步驟3: 等待照片上傳，任何其他輸入都提示上傳照片或略過（兜底邏輯）
-          // 這確保有草稿時一定不會執行到 AI 查詢
+          // 這確保有 session 時一定不會執行到 AI 查詢
           console.log('[報修] 兜底邏輯: 提示上傳照片');
           await client.replyMessage(replyToken, {
             type: 'text',
@@ -839,41 +817,47 @@ export async function POST(req) {
         const replyToken = event.replyToken;
         const messageId = event.message.id;
 
-        // 檢查是否在報修流程中（草稿狀態且已填寫地點和描述）
-        const { data: draftRepair, error: draftError } = await supabase
-          .from('repairs')
-          .select('*')
-          .eq('user_id', userId)
-          .eq('status', 'draft')
-          .maybeSingle();
+        // 檢查是否在報修流程中（已填寫地點和描述）
+        const currentSession = repairSessions.get(userId);
 
-        console.log('[報修-圖片] 草稿狀態:', {
-          hasDraft: !!draftRepair,
-          location: draftRepair?.location,
-          description: draftRepair?.description,
-          error: draftError
+        console.log('[報修-圖片] Session 狀態:', {
+          hasSession: !!currentSession,
+          location: currentSession?.location,
+          description: currentSession?.description
         });
 
-        // 檢查草稿是否完整（地點和描述都不是 null、空字串或純空白）
-        const hasLocation = draftRepair?.location && draftRepair.location.trim() !== '';
-        const hasDescription = draftRepair?.description && draftRepair.description.trim() !== '';
+        // 檢查 session 是否完整（地點和描述都存在）
+        const hasLocation = currentSession?.location && currentSession.location.trim() !== '';
+        const hasDescription = currentSession?.description && currentSession.description.trim() !== '';
 
-        if (draftRepair && hasLocation && hasDescription) {
-          console.log('[報修-圖片] ✅ 草稿完整，開始提交報修');
+        if (currentSession && hasLocation && hasDescription) {
+          console.log('[報修-圖片] ✅ Session 完整，開始提交報修');
           try {
-            // 更新草稿為正式報修
-            const { data: completedRepair, error: updateError } = await supabase
+            // 生成報修編號
+            const today = new Date();
+            const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+            const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+            const repairCode = `R${dateStr}-${randomNum}`;
+
+            // 直接寫入資料庫為 pending 狀態
+            const { data: completedRepair, error: insertError } = await supabase
               .from('repairs')
-              .update({
+              .insert([{
+                user_id: userId,
+                repair_code: repairCode,
                 status: 'pending',
+                category: '一般報修',
+                building: '未指定',
+                location: currentSession.location,
+                description: currentSession.description,
+                priority: 'medium',
+                created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
-              })
-              .eq('user_id', userId)
-              .eq('status', 'draft')
+              }])
               .select();
 
-            if (updateError || !completedRepair || completedRepair.length === 0) {
-              console.error('[報修-圖片] 提交報修單失敗:', updateError);
+            if (insertError || !completedRepair || completedRepair.length === 0) {
+              console.error('[報修-圖片] 提交報修單失敗:', insertError);
               await client.replyMessage(replyToken, {
                 type: 'text',
                 text: '❌ 報修單提交失敗，請稍後再試'
@@ -900,6 +884,9 @@ export async function POST(req) {
 
             console.log('[報修-圖片] ✅ 報修提交成功:', repair.repair_code);
 
+            // 清除 session
+            repairSessions.delete(userId);
+
             // 回覆成功訊息
             await client.replyMessage(replyToken, {
               type: 'text',
@@ -923,7 +910,7 @@ export async function POST(req) {
         }
 
         // 非報修流程的圖片訊息，回覆提示
-        console.log('[報修-圖片] ❌ 非報修流程或草稿不完整');
+        console.log('[報修-圖片] ❌ 非報修流程或 session 不完整');
         await client.replyMessage(replyToken, {
           type: 'text',
           text: '📸 收到圖片了！\n目前系統主要支援文字查詢。\n如需報修並上傳照片，請先輸入「報修」。'
