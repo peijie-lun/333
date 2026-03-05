@@ -236,7 +236,39 @@ export async function POST(req) {
           continue;
         }
 
-        // �🔧 報修系統
+        // 🔧 報修系統
+        
+        // 啟動報修流程（最優先處理，避免被舊 session 干擾）
+        if (userText === '報修' || userText === '我要報修' || userText === '新報修') {
+          console.log('[報修] ==================== 啟動新報修流程 ====================');
+          
+          // 清除舊的 session（如果有）
+          const oldSession = repairSessions.get(userId);
+          if (oldSession) {
+            console.log('[報修] 偵測到舊 session，將被覆蓋:', oldSession);
+          }
+          
+          // 初始化新的報修 session
+          repairSessions.set(userId, {
+            location: null,
+            description: null,
+            startTime: Date.now()
+          });
+
+          console.log('[報修] 新 session 已建立');
+
+          try {
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '📍 請輸入地點'
+            });
+            console.log('[報修] ✅ 啟動流程: 訊息回覆成功');
+          } catch (replyErr) {
+            console.error('[報修] ❌ 啟動流程: 訊息回覆失敗:', replyErr.message);
+          }
+          continue;
+        }
+        
         // 檢查用戶是否在報修流程中
         const currentSession = repairSessions.get(userId);
         
@@ -246,29 +278,6 @@ export async function POST(req) {
           location: currentSession?.location,
           description: currentSession?.description
         });
-
-        // 啟動報修流程（精確匹配，避免與「我的報修」衝突）
-        if (userText === '報修' || userText === '我要報修' || userText === '新報修') {
-          // 初始化新的報修 session
-          repairSessions.set(userId, {
-            location: null,
-            description: null,
-            startTime: Date.now()
-          });
-
-          console.log('[報修] 啟動新報修流程');
-
-          try {
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: '📍 請輸入地點'
-            });
-            console.log('[報修] 啟動流程: 訊息回覆成功');
-          } catch (replyErr) {
-            console.error('[報修] 啟動流程: 訊息回覆失敗:', replyErr.message);
-          }
-          continue;
-        }
 
         // 查詢我的報修記錄（必須完全匹配，避免與「我要報修」衝突）
         if (userText === '我的報修' || userText === '報修記錄' || userText === '報修查詢') {
