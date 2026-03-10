@@ -119,9 +119,11 @@ function generateClarificationOptions(searchResults, intent, originalQuery) {
           }
         }
         
-        // 4. 限制長度，確保不超過20字
-        if (contentPreview.length > 20) {
-          contentPreview = contentPreview.substring(0, 20) + '...';
+        // 4. 限制長度：LINE Quick Reply label 限制 20 字元
+        // 扣除前綴 "1. " (3字元)，實際內容最多 17 字元
+        const maxContentLength = 17;
+        if (contentPreview.length > maxContentLength) {
+          contentPreview = contentPreview.substring(0, maxContentLength) + '...';
         }
         
         options.push({
