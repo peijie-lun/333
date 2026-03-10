@@ -126,6 +126,39 @@ function generateClarificationOptions(searchResults, intent, originalQuery) {
 async function handleClarificationResponse(clarifyQuery) {
   console.log(`[Clarify] 處理澄清選項: ${clarifyQuery}`);
   
+  // 處理通用 FAQ 選項 (clarify:faq_{id})
+  if (clarifyQuery.startsWith('clarify:faq_')) {
+    const faqId = clarifyQuery.replace('clarify:faq_', '');
+    console.log(`[Clarify] 查詢 FAQ ID: ${faqId}`);
+    
+    // 從資料庫查詢該 FAQ 內容
+    const { data: faqData, error } = await supabase
+      .from('knowledge')
+      .select('content')
+      .eq('id', faqId)
+      .single();
+    
+    if (error || !faqData) {
+      console.error('[Clarify] 查詢 FAQ 失敗:', error);
+      return {
+        answer: '抱歉，無法找到相關資訊，請提供更詳細的問題。',
+        normalized_question: clarifyQuery,
+        intent: null,
+        intent_confidence: null,
+        answered: false
+      };
+    }
+    
+    // 直接回傳 FAQ 內容
+    return {
+      answer: faqData.content,
+      normalized_question: clarifyQuery,
+      intent: null,
+      intent_confidence: null,
+      answered: true
+    };
+  }
+  
   // 根據澄清選項生成對應的詳細問題
   const clarificationMap = {
     // 包裹相關
