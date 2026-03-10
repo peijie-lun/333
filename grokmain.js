@@ -168,9 +168,18 @@ async function handleClarificationResponse(clarifyQuery) {
       };
     }
     
+    // 處理內容格式：提取「答：」後面的部分
+    let answerContent = faqData.content;
+    
+    // 如果是「問：...答：...」格式，只取答案部分
+    const answerMatch = answerContent.match(/答[：:]\s*(.+)/s);
+    if (answerMatch && answerMatch[1]) {
+      answerContent = answerMatch[1].trim();
+    }
+    
     // 直接回傳 FAQ 內容
     return {
-      answer: faqData.content,
+      answer: answerContent,
       normalized_question: clarifyQuery,
       intent: null,
       intent_confidence: null,
