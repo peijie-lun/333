@@ -119,6 +119,18 @@ function generateClarificationOptions(searchResults, intent, originalQuery) {
           }
         }
         
+        // 3.5 進一步優化：移除常見的冗長格式
+        // 例如："寵物規定：社區允許..." → "寵物規定"
+        // 或 "包裹領取流程說明：..." → "包裹領取流程"
+        const colonMatch = contentPreview.match(/^([^：:]{2,8})[：:]/);
+        if (colonMatch && colonMatch[1]) {
+          // 如果冒號前面是簡短的主題（2-8字），就只保留主題
+          contentPreview = colonMatch[1];
+        } else {
+          // 移除尾部的冒號及其後內容（如果存在）
+          contentPreview = contentPreview.replace(/[：:].+$/, '');
+        }
+        
         // 4. 限制長度：LINE Quick Reply label 限制 20 字元
         // 計算前綴長度（"1. " 或 "10. " 等）
         const prefix = `${index + 1}. `;
