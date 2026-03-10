@@ -689,61 +689,89 @@ export async function POST(req) {
           if (result.needsClarification) {
             console.log('[追問] 觸發澄清機制');
             
-            // 寫入 chat_log (需要追問的記錄)
-            const logData = {
-              raw_question: userText,
-              normalized_question: result.normalized_question || userText,
-              intent: result.intent || null,
-              intent_confidence: typeof result.intent_confidence === 'number' ? result.intent_confidence : null,
-              answered: false,
-              needs_clarification: true,
-              user_id: userId || null,
-              event_id: eventId || null,
-              created_at: new Date().toISOString(),
-            };
-            
-            const { data: insertData, error: insertError } = await supabase
-              .from('chat_log')
-              .insert([logData])
-              .select();
-            
-            if (!insertError && insertData?.[0]) {
-              chatLogId = insertData[0].id;
-              console.log('[追問] chatLogId 已記錄:', chatLogId);
+            try {
+              // 寫入 chat_log (需要追問的記錄)
+              const logData = {
+                raw_question: userText,
+                normalized_question: result.normalized_question || userText,
+                intent: result.intent || null,
+                intent_confidence: typeof result.intent_confidence === 'number' ? result.intent_confidence : null,
+                answered: false,
+                needs_clarification: true,
+                user_id: userId || null,
+                event_id: eventId || null,
+                created_at: new Date().toISOString(),
+              };
               
-              // 記錄澄清選項到 clarification_options 表
-              const clarificationRecords = result.clarificationOptions.map((opt, index) => ({
-                chat_log_id: chatLogId,
-                option_label: opt.label,
-                option_value: opt.value,
-                display_order: index
-              }));
+              const { data: insertData, error: insertError } = await supabase
+                .from('chat_log')
+                .insert([logData])
+                .select();
               
-              await supabase
-                .from('clarification_options')
-                .insert(clarificationRecords);
-            }
-            
-            // 建立 Quick Reply 訊息
-            const clarificationMessage = {
-              type: 'text',
-              text: result.clarificationMessage,
-              quickReply: {
-                items: result.clarificationOptions.map(opt => ({
-                  type: 'action',
-                  action: {
-                    type: 'postback',
-                    label: opt.label,
-                    data: `action=clarify&value=${opt.value}`,
-                    displayText: opt.label  // 用戶點擊後顯示的文字
+              if (insertError) {
+                console.error('[追問] ❌ chat_log 寫入失敗:', insertError);
+              } else if (insertData?.[0]) {
+                chatLogId = insertData[0].id;
+                console.log('[追問] ✅ chatLogId 已記錄:', chatLogId);
+                
+                // 記錄澄清選項到 clarification_options 表
+                try {
+                  const clarificationRecords = result.clarificationOptions.map((opt, index) => ({
+                    chat_log_id: chatLogId,
+                    option_label: opt.label,
+                    option_value: opt.value,
+                    display_order: index
+                  }));
+                  
+                  const { error: optionsError } = await supabase
+                    .from('clarification_options')
+                    .insert(clarificationRecords);
+                  
+                  if (optionsError) {
+                    console.error('[追問] ⚠️ clarification_options 寫入失敗:', optionsError);
                   }
-                }))
+                } catch (optErr) {
+                  console.error('[追問] ⚠️ clarification_options 處理失敗:', optErr);
+                }
               }
-            };
-            
-            await client.replyMessage(replyToken, clarificationMessage);
-            usedReplyTokens.add(replyToken);
-            continue;
+              
+              // 建立 Quick Reply 訊息
+              const clarificationMessage = {
+                type: 'text',
+                text: result.clarificationMessage,
+                quickReply: {
+                  items: result.clarificationOptions.map(opt => ({
+                    type: 'action',
+                    action: {
+                      type: 'postback',
+                      label: opt.label,
+                      data: `action=clarify&value=${opt.value}`,
+                      displayText: opt.label  // 用戶點擊後顯示的文字
+                    }
+                  }))
+                }
+              };
+              
+              await client.replyMessage(replyToken, clarificationMessage);
+              usedReplyTokens.add(replyToken);
+              console.log('[追問] ✅ 澄清選項已發送');
+              continue;
+            } catch (clarifyErr) {
+              console.error('[追問] ❌ 發送澄清訊息失敗:', clarifyErr);
+              // 澄清機制失敗時，回覆一般錯誤訊息
+              if (!usedReplyTokens.has(replyToken)) {
+                try {
+                  await client.replyMessage(replyToken, { 
+                    type: 'text', 
+                    text: '抱歉，系統處理中遇到問題，請稍後再試或輸入更詳細的問題。' 
+                  });
+                  usedReplyTokens.add(replyToken);
+                } catch (replyErr) {
+                  console.error('[追問] ❌ 回覆錯誤訊息失敗:', replyErr.message);
+                }
+              }
+              continue;
+            }
           }
           
           // ===== 正常回答流程 =====
