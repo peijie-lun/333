@@ -120,14 +120,23 @@ function generateClarificationOptions(searchResults, intent, originalQuery) {
         }
         
         // 4. 限制長度：LINE Quick Reply label 限制 20 字元
-        // 扣除前綴 "1. " (3字元)，實際內容最多 17 字元
-        const maxContentLength = 17;
+        // 計算前綴長度（"1. " 或 "10. " 等）
+        const prefix = `${index + 1}. `;
+        const prefixLength = prefix.length;
+        const maxTotalLength = 20;
+        
+        // 如果需要截斷，要為省略號 "..." 預留 3 個字元
+        let maxContentLength = maxTotalLength - prefixLength;
+        let finalContent = contentPreview;
+        
         if (contentPreview.length > maxContentLength) {
-          contentPreview = contentPreview.substring(0, maxContentLength) + '...';
+          // 需要截斷：預留 3 字元給 "..."
+          maxContentLength = maxTotalLength - prefixLength - 3;
+          finalContent = contentPreview.substring(0, maxContentLength) + '...';
         }
         
         options.push({
-          label: `${index + 1}. ${contentPreview}`,
+          label: `${prefix}${finalContent}`,
           value: `clarify:faq_${result.id}`
         });
       });
