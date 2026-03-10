@@ -247,9 +247,13 @@ export async function POST(req) {
             rankingMessage += '💡 您也可以直接輸入這些關鍵字來獲得快速回答！';
             
             await client.replyMessage(replyToken, { type: 'text', text: rankingMessage });
+            usedReplyTokens.add(replyToken);
           } catch (err) {
             console.error('❌ 熱門問題查詢失敗:', err);
-            await client.replyMessage(replyToken, { type: 'text', text: '熱門問題查詢失敗，請稍後再試。' });
+            if (!usedReplyTokens.has(replyToken)) {
+              await client.replyMessage(replyToken, { type: 'text', text: '熱門問題查詢失敗，請稍後再試。' });
+              usedReplyTokens.add(replyToken);
+            }
           }
           continue;
         }
@@ -349,12 +353,16 @@ export async function POST(req) {
               type: 'text',
               text: recordsText
             });
+            usedReplyTokens.add(replyToken);
           } catch (err) {
             console.error('[報修] 查詢記錄失敗:', err);
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: '❌ 查詢失敗，請稍後再試'
-            });
+            if (!usedReplyTokens.has(replyToken)) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 查詢失敗，請稍後再試'
+              });
+              usedReplyTokens.add(replyToken);
+            }
           }
           continue;
         }
@@ -395,6 +403,7 @@ export async function POST(req) {
                 type: 'text',
                 text: '📝 請簡單描述問題狀況'
               });
+              usedReplyTokens.add(replyToken);
               console.log('[報修] 步驟1: 訊息回覆成功');
             } catch (replyErr) {
               console.error('[報修] 步驟1: 訊息回覆失敗:', replyErr.message);
@@ -418,6 +427,7 @@ export async function POST(req) {
                 type: 'text',
                 text: `✅ 問題描述：${userText}\n\n📸 請上傳問題照片\n（可直接拍照上傳，或輸入「略過」）\n\n輸入「取消報修」可中止流程`
               });
+              usedReplyTokens.add(replyToken);
               console.log('[報修] 步驟2: 訊息回覆成功');
             } catch (replyErr) {
               console.error('[報修] 步驟2: 訊息回覆失敗:', replyErr.message);
@@ -464,6 +474,7 @@ export async function POST(req) {
                 type: 'text',
                 text: '❌ 報修單提交失敗，請稍後再試'
               });
+              usedReplyTokens.add(replyToken);
               continue;
             }
             
@@ -475,6 +486,7 @@ export async function POST(req) {
               type: 'text',
               text: `✅ 報修已送出\n📌 編號：${repair.repair_code}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.location}\n📝 問題：${repair.description}\n\n管理單位會盡快處理，謝謝您的通報！`
             });
+            usedReplyTokens.add(replyToken);
             continue;
           }
 
@@ -485,6 +497,7 @@ export async function POST(req) {
             type: 'text',
             text: '📷 請上傳問題照片\n或輸入「略過」跳過照片上傳\n\n您也可以輸入「取消報修」中止流程'
           });
+          usedReplyTokens.add(replyToken);
           continue;
         }
 
@@ -494,6 +507,7 @@ export async function POST(req) {
             const parts = userText.split(':');
             if (parts.length < 3) {
               await client.replyMessage(replyToken, { type: 'text', text: '投票訊息格式錯誤' });
+              usedReplyTokens.add(replyToken);
               continue;
             }
 
@@ -508,6 +522,7 @@ export async function POST(req) {
 
             if (!voteExists) {
               await client.replyMessage(replyToken, { type: 'text', text: '投票已過期或不存在' });
+              usedReplyTokens.add(replyToken);
               continue;
             }
 
@@ -517,6 +532,7 @@ export async function POST(req) {
 
             if (!user_id) {
               await client.replyMessage(replyToken, { type: 'text', text: '找不到住戶資料' });
+              usedReplyTokens.add(replyToken);
               continue;
             }
 
@@ -530,6 +546,7 @@ export async function POST(req) {
 
             if (existingVote) {
               await client.replyMessage(replyToken, { type: 'text', text: '您已經投過票' });
+              usedReplyTokens.add(replyToken);
               continue;
             }
 
@@ -544,10 +561,12 @@ export async function POST(req) {
             if (voteError) {
               console.error('❌ 投票寫入失敗:', voteError);
               await client.replyMessage(replyToken, { type: 'text', text: '投票失敗' });
+              usedReplyTokens.add(replyToken);
               continue;
             }
 
             await client.replyMessage(replyToken, { type: 'text', text: `確認，您的投票結果為「${option_selected}」` });
+            usedReplyTokens.add(replyToken);
           } catch (err) {
             console.error('❌ 投票處理失敗:', err);
           }
@@ -612,6 +631,7 @@ export async function POST(req) {
           };
 
           await client.replyMessage(replyToken, carouselMessage);
+          usedReplyTokens.add(replyToken);
           continue;
         }
 
@@ -722,6 +742,7 @@ export async function POST(req) {
             };
             
             await client.replyMessage(replyToken, clarificationMessage);
+            usedReplyTokens.add(replyToken);
             continue;
           }
           
@@ -834,13 +855,20 @@ export async function POST(req) {
           }
           
           await client.replyMessage(replyToken, replyMessage);
+          usedReplyTokens.add(replyToken); // 標記為已使用
+          console.log('✅ LLM 查詢回覆成功');
         } catch (err) {
-          console.error('查詢 LLM API 失敗:', err);
-          // 只在 replyToken 尚未使用時才回覆
-          try {
-            await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
-          } catch (replyErr) {
-            console.error('回覆錯誤訊息失敗 (可能 token 已使用):', replyErr.message);
+          console.error('❌ 查詢 LLM API 失敗:', err);
+          // 檢查 replyToken 是否已使用
+          if (!usedReplyTokens.has(replyToken)) {
+            try {
+              await client.replyMessage(replyToken, { type: 'text', text: '查詢失敗，請稍後再試。' });
+              usedReplyTokens.add(replyToken);
+            } catch (replyErr) {
+              console.error('回覆錯誤訊息失敗:', replyErr.message);
+            }
+          } else {
+            console.warn('⚠️ replyToken 已使用，無法回覆錯誤訊息');
           }
         }
       }
@@ -931,18 +959,23 @@ export async function POST(req) {
               type: 'text',
               text: `✅ 報修已送出\n📌 編號：${repair.repair_code}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.location}\n📝 問題：${repair.description}\n📸 已附上照片\n\n管理單位會盡快處理，謝謝您的通報！`
             });
-            
+            usedReplyTokens.add(replyToken); // 標記為已使用
             console.log('[報修-圖片] ✅ 訊息回覆成功');
           } catch (err) {
-            console.error('[報修-圖片] 處理照片失敗:', err);
-            // 只有在還沒回覆的情況下才嘗試回覆錯誤訊息
-            try {
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '❌ 照片處理失敗，請稍後再試'
-              });
-            } catch (replyErr) {
-              console.error('[報修-圖片] 無法回覆錯誤訊息（replyToken 可能已使用）:', replyErr.message);
+            console.error('[報修-圖片] ❌ 處理照片失敗:', err);
+            // 檢查 replyToken 是否已使用
+            if (!usedReplyTokens.has(replyToken)) {
+              try {
+                await client.replyMessage(replyToken, {
+                  type: 'text',
+                  text: '❌ 照片處理失敗，請稍後再試'
+                });
+                usedReplyTokens.add(replyToken);
+              } catch (replyErr) {
+                console.error('[報修-圖片] 回覆錯誤訊息失敗:', replyErr.message);
+              }
+            } else {
+              console.warn('[報修-圖片] ⚠️ replyToken 已使用，無法回覆錯誤訊息');
             }
           }
           continue;
@@ -1144,16 +1177,23 @@ export async function POST(req) {
             }
             
             await client.replyMessage(replyToken, { type: 'text', text: responseText });
+            usedReplyTokens.add(replyToken); // 標記為已使用
+            console.log('[Postback] ✅ 回饋處理成功');
           } catch (err) {
-            console.error('[Postback Error]', err);
-            // 嘗試回覆錯誤訊息（如果 replyToken 尚未使用）
-            try {
-              await client.replyMessage(replyToken, { 
-                type: 'text', 
-                text: '處理失敗，請稍後再試。' 
-              });
-            } catch (replyErr) {
-              console.error('[Reply Error] replyToken 可能已使用:', replyErr.message);
+            console.error('[Postback] ❌ 處理失敗:', err);
+            // 檢查 replyToken 是否已使用
+            if (!usedReplyTokens.has(replyToken)) {
+              try {
+                await client.replyMessage(replyToken, { 
+                  type: 'text', 
+                  text: '處理失敗，請稍後再試。' 
+                });
+                usedReplyTokens.add(replyToken);
+              } catch (replyErr) {
+                console.error('[Postback] 回覆錯誤訊息失敗:', replyErr.message);
+              }
+            } else {
+              console.warn('[Postback] ⚠️ replyToken 已使用，無法回覆錯誤訊息');
             }
           }
         }
