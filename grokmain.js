@@ -102,10 +102,27 @@ function generateClarificationOptions(searchResults, intent, originalQuery) {
       
       // 從搜尋結果提取選項
       topResults.forEach((result, index) => {
-        // 從內容中提取簡短標題（限制 15 字以內）
-        const contentPreview = result.content
-          .replace(/[\r\n]+/g, ' ')
-          .substring(0, 15);
+        let contentPreview = result.content;
+        
+        // 1. 去除換行符
+        contentPreview = contentPreview.replace(/[\r\n]+/g, ' ');
+        
+        // 2. 提取「問：」後面的內容（如果有的話）
+        const questionMatch = contentPreview.match(/問[：:]\s*(.+?)(?:[？?。！!]|答[：:]|$)/);
+        if (questionMatch && questionMatch[1]) {
+          contentPreview = questionMatch[1].trim();
+        } else {
+          // 3. 如果沒有「問：」格式，嘗試提取第一句話
+          const firstSentence = contentPreview.match(/^(.+?)[。！？!?]/);
+          if (firstSentence && firstSentence[1]) {
+            contentPreview = firstSentence[1].trim();
+          }
+        }
+        
+        // 4. 限制長度，確保不超過20字
+        if (contentPreview.length > 20) {
+          contentPreview = contentPreview.substring(0, 20) + '...';
+        }
         
         options.push({
           label: `${index + 1}. ${contentPreview}`,
