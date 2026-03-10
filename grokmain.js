@@ -375,13 +375,18 @@ async function chat(query) {
     // 拆解關鍵字 (n-gram)
     const words = query.match(/[\u4e00-\u9fa5]|\w+/g) || [];
     let ngrams = [];
-    for (let n = 1; n <= 3; n++) {
+    
+    // 優先保留較長的 n-gram (更精確)
+    for (let n = 3; n >= 1; n--) {
       for (let i = 0; i <= words.length - n; i++) {
-        ngrams.push(words.slice(i, i + n).join(''));
+        ngrams.push({
+          text: words.slice(i, i + n).join(''),
+          length: n
+        });
       }
     }
     
-    console.log(`[Keywords] ${ngrams.slice(0, 10).join(', ')}`);
+    console.log(`[Keywords] ${ngrams.slice(0, 10).map(ng => ng.text).join(', ')}`);
 
     // 從資料庫用關鍵字搜尋
     console.log('[Debug] Step 3: Supabase 關鍵字查詢前');
@@ -392,17 +397,47 @@ async function chat(query) {
     console.log('[Debug] Step 3: Supabase 關鍵字查詢後', allData ? `共${allData.length}筆` : '無資料');
 
     if (allData) {
-      const keywordMatches = allData.filter(item => 
-        ngrams.some(kw => item.content.includes(kw))
-      );
-
-      console.log(`[Match] 關鍵字命中 ${keywordMatches.length} 筆`);
-      
-      if (keywordMatches.length > 0) {
-        finalResults = keywordMatches.slice(0, 3).map((item, idx) => ({
+      // 為每個結果計算匹配分數
+      const scoredMatches = allData.map(item => {
+        let score = 0;
+        let matchedKeywords = new Set();
+        
+        ngrams.forEach(ng => {
+          if (item.content.includes(ng.text)) {
+            // 較長的關鍵字給更高分數
+            // 3-gram: 10分, 2-gram: 3分, 1-gram: 1分
+            const points = ng.length === 3 ? 10 : ng.length === 2 ? 3 : 1;
+            score += points;
+            matchedKeywords.add(ng.text);
+          }
+        });
+        
+        return {
           id: item.id,
           content: item.content,
-          similarity: 0.5 - idx * 0.1  // 模擬相似度
+          score: score,
+          matchedCount: matchedKeywords.size
+        };
+      })
+      .filter(item => item.score > 0) // 只保留有匹配的
+      .sort((a, b) => {
+        // 先按分數排序，分數相同則按匹配關鍵字數量
+        if (b.score !== a.score) return b.score - a.score;
+        return b.matchedCount - a.matchedCount;
+      });
+
+      console.log(`[Match] 關鍵字命中 ${scoredMatches.length} 筆`);
+      if (scoredMatches.length > 0) {
+        console.log(`[Match] Top 3 分數:`, scoredMatches.slice(0, 3).map(m => `${m.score}分`).join(', '));
+      }
+      
+      if (scoredMatches.length > 0) {
+        // 根據分數動態設定相似度
+        finalResults = scoredMatches.slice(0, 3).map((item, idx) => ({
+          id: item.id,
+          content: item.content,
+          // 高分結果給較高的模擬相似度
+          similarity: Math.min(0.5 + (item.score / 20), 0.85) - idx * 0.05
         }));
         // 更新 maxSimilarity 為 fallback 結果的最高相似度
         maxSimilarity = finalResults[0]?.similarity || 0;
