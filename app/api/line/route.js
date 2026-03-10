@@ -21,10 +21,16 @@ const client = new Client(lineConfig);// LINE Bot SDK 客戶端
 const repairSessions = new Map();
 // 結構：{ userId: { location: string, description: string, startTime: timestamp } }
 
+// 追蹤已使用的 replyToken（防止重複處理）
+const usedReplyTokens = new Set();
+
 // 移除圖片關鍵字攔截，讓所有查詢都進入 AI 處理
 // const IMAGE_KEYWORDS = ['圖片', '設施', '游泳池', '健身房', '大廳'];
 // 處理 LINE Webhook 請求
 export async function POST(req) {
+  const requestId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+  console.log(`\n========== [${requestId}] 新的 Webhook 請求 ==========`);
+  
   try {
     const rawBody = await req.text();// 取得原始請求體
     if (!rawBody) return new Response('Bad Request: Empty body', { status: 400 });
@@ -58,6 +64,13 @@ export async function POST(req) {
     for (const event of events) {// 逐一處理每個事件
       const userId = event.source?.userId;
       if (!userId) continue;
+
+      // 檢查 replyToken 是否已被使用（防止重複處理）
+      const replyToken = event.replyToken;
+      if (replyToken && usedReplyTokens.has(replyToken)) {
+        console.log('⚠️ [重複 Token] 此 replyToken 已被處理，跳過:', replyToken);
+        continue;
+      }
 
       // 嘗試抓 LINE Profile
       let profile = { displayName: '', pictureUrl: '', statusMessage: '' };
@@ -108,6 +121,7 @@ export async function POST(req) {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
         console.log('📩 使用者輸入:', userText);
+        console.log('📩 replyToken:', replyToken);
         console.log('📩 使用者輸入長度:', userText.length);
         console.log('📩 包含 📍?:', userText.includes('📍'));
         console.log('📩 包含 🛠?:', userText.includes('🛠'));
@@ -214,6 +228,10 @@ export async function POST(req) {
         // 檢查是否包含忽略關鍵字（更嚴格的匹配）
         const ignoreKeywords = [
           '本系統可以',
+          '查詢社區相關問題',
+          '查看熱門常見問題',
+          '接收推播',
+          '歡迎直接輸入查詢',
           '請上傳照片',
           '上傳照片並輸入',
           '照片並輸入地點',
@@ -262,9 +280,15 @@ export async function POST(req) {
               type: 'text',
               text: '📍 請輸入地點'
             });
+            usedReplyTokens.add(replyToken); // 標記為已使用
             console.log('[報修] ✅ 啟動流程: 訊息回覆成功');
           } catch (replyErr) {
             console.error('[報修] ❌ 啟動流程: 訊息回覆失敗:', replyErr.message);
+            console.error('[報修] 錯誤詳情:', {
+              status: replyErr.response?.status,
+              statusText: replyErr.response?.statusText,
+              data: replyErr.response?.data
+            });
           }
           continue;
         }
