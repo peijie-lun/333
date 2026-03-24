@@ -712,7 +712,109 @@ export async function POST(req) {
 
         // 1.5️⃣ 包裹最新狀態查詢（依 LINE 使用者綁定單位查最新一筆）
         const normalizedUserText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '');
+        const isFeeQuery = normalizedUserText === '查詢我的管理費';
         const isPackageQuery = normalizedUserText === '查詢我的包裹';
+
+        if (isFeeQuery) {
+          try {
+            // 優先使用本次已查到的 profile，必要時補查 unit_id
+            let profileForFee = existingProfile;
+
+            if (!profileForFee?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForFee = {
+                  ...existingProfile,
+                  ...profileWithUnit
+                };
+              }
+            }
+
+            if (!profileForFee?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定，暫時無法查詢管理費。\n請先完成 LINE 帳號綁定後再試一次。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            const { data: latestFee, error: feeError } = await supabase
+              .from('fees')
+              .select('*')
+              .eq('unit_id', profileForFee.unit_id)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (feeError) {
+              throw feeError;
+            }
+
+            if (!latestFee) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '💰 目前查不到您的管理費資料。\n若您剛收到通知，請稍後再查詢。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            const { data: unitData } = await supabase
+              .from('units')
+              .select('unit_number, unit_code')
+              .eq('id', profileForFee.unit_id)
+              .maybeSingle();
+
+            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
+            const amountText = latestFee.amount != null ? `NT$ ${latestFee.amount}` : '未提供';
+
+            const dueDate = latestFee.due ? new Date(latestFee.due) : null;
+            const dueText = dueDate && !Number.isNaN(dueDate.getTime())
+              ? dueDate.toLocaleDateString('zh-TW')
+              : (latestFee.due || '未提供');
+
+            const invoiceText =
+              latestFee.invoice ??
+              latestFee.invoice_number ??
+              latestFee.invoice_no ??
+              latestFee.receipt_no ??
+              '未提供';
+
+            const feeStatusText = latestFee.paid === true
+              ? '✅ 已繳費'
+              : latestFee.paid === false
+                ? '🟡 未繳費'
+                : (latestFee.status ? `ℹ️ ${latestFee.status}` : '未提供');
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text:
+                `💰 您最新一筆管理費資訊\n` +
+                `房號：${roomText}\n` +
+                `金額：${amountText}\n` +
+                `到期日：${dueText}\n` +
+                `發票：${invoiceText}\n` +
+                `繳費狀態：${feeStatusText}`
+            });
+            usedReplyTokens.add(replyToken);
+          } catch (feeErr) {
+            console.error('❌ 管理費查詢失敗:', feeErr);
+            if (!usedReplyTokens.has(replyToken)) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 管理費查詢失敗，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+            }
+          }
+          continue;
+        }
 
         if (isPackageQuery) {
           try {
