@@ -582,7 +582,7 @@ export async function POST(req) {
           .neq('status', 'submitted')
           .maybeSingle();
 
-        if (activeSession) {
+        if (activeSession && cleanText !== '回報緊急事件') {
           try {
             // 在會話中：根據當前狀態，保存對應資訊
             if (activeSession.status === 'event_type') {
