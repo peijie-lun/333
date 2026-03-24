@@ -580,17 +580,36 @@ export async function POST(req) {
           .select('id, event_type, location, status')
           .eq('line_user_id', userId)
           .neq('status', 'submitted')
+          .order('updated_at', { ascending: false })
+          .limit(1)
           .maybeSingle();
+
+        if (sessionCheckErr) {
+          console.error('❌ 查詢緊急事件會話失敗:', sessionCheckErr);
+        }
 
         if (activeSession && cleanText !== '回報緊急事件') {
           try {
             // 在會話中：根據當前狀態，保存對應資訊
             if (activeSession.status === 'event_type') {
+              const normalizedEventType = userText
+                .replace(/^選擇[:：]\s*/, '')
+                .trim();
+
+              if (!normalizedEventType) {
+                await client.replyMessage(replyToken, {
+                  type: 'text',
+                  text: '⚠️ 事件類型不可空白，請重新輸入。'
+                });
+                usedReplyTokens.add(replyToken);
+                continue;
+              }
+
               // 使用者輸入自訂事件類型
               const { error: updateErr } = await supabase
                 .from('emergency_sessions')
                 .update({
-                  event_type: userText,
+                  event_type: normalizedEventType,
                   status: 'location',
                   updated_at: new Date().toISOString()
                 })
@@ -600,7 +619,7 @@ export async function POST(req) {
 
               await client.replyMessage(replyToken, {
                 type: 'text',
-                text: `✅ 已選擇事件類型：${userText}\n\n📍 請輸入事件地點（例如：A棟3樓、地下室等）`
+                text: `✅ 已選擇事件類型：${normalizedEventType}\n\n📍 請輸入事件地點（例如：A棟3樓、地下室等）`
               });
               usedReplyTokens.add(replyToken);
               continue;
