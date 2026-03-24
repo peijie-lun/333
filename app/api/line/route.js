@@ -574,6 +574,289 @@ export async function POST(req) {
           continue;
         }
 
+        // ===== 檢查是否有進行中的緊急事件會話 =====
+        const { data: activeSession, error: sessionCheckErr } = await supabase
+          .from('emergency_sessions')
+          .select('id, event_type, location, status')
+          .eq('line_user_id', userId)
+          .neq('status', 'submitted')
+          .maybeSingle();
+
+        if (activeSession) {
+          try {
+            // 在會話中：根據當前狀態，保存對應資訊
+            if (activeSession.status === 'event_type') {
+              // 使用者輸入自訂事件類型
+              const { error: updateErr } = await supabase
+                .from('emergency_sessions')
+                .update({
+                  event_type: userText,
+                  status: 'location',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', activeSession.id);
+
+              if (updateErr) throw updateErr;
+
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: `✅ 已選擇事件類型：${userText}\n\n📍 請輸入事件地點（例如：A棟3樓、地下室等）`
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            if (activeSession.status === 'location') {
+              // 使用者輸入地點
+              const { error: updateErr } = await supabase
+                .from('emergency_sessions')
+                .update({
+                  location: userText,
+                  status: 'description',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', activeSession.id);
+
+              if (updateErr) throw updateErr;
+
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: `✅ 地點已確認：${userText}\n\n📝 請輸入事件描述（盡量詳細）`
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            if (activeSession.status === 'description') {
+              // 使用者輸入描述，顯示確認卡片
+              const confirmFlex = {
+                type: 'flex',
+                altText: '📋 確認事件資訊',
+                contents: {
+                  type: 'bubble',
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    spacing: 'md',
+                    contents: [
+                      {
+                        type: 'text',
+                        text: '📋 確認事件資訊',
+                        weight: 'bold',
+                        size: 'lg',
+                        wrap: true
+                      },
+                      { type: 'separator', margin: 'md' },
+                      {
+                        type: 'box',
+                        layout: 'vertical',
+                        spacing: 'sm',
+                        contents: [
+                          {
+                            type: 'text',
+                            text: `🔹 類型：${activeSession.event_type}`,
+                            wrap: true,
+                            size: 'sm',
+                            color: '#666666'
+                          },
+                          {
+                            type: 'text',
+                            text: `🔹 地點：${activeSession.location}`,
+                            wrap: true,
+                            size: 'sm',
+                            color: '#666666'
+                          },
+                          {
+                            type: 'text',
+                            text: `🔹 描述：${userText}`,
+                            wrap: true,
+                            size: 'sm',
+                            color: '#666666'
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  footer: {
+                    type: 'box',
+                    layout: 'vertical',
+                    spacing: 'sm',
+                    contents: [
+                      {
+                        type: 'button',
+                        style: 'primary',
+                        color: '#22C55E',
+                        action: {
+                          type: 'postback',
+                          label: '✅ 確認提交',
+                          data: `action=submit_emergency&session_id=${activeSession.id}&description=${encodeURIComponent(userText)}`,
+                          displayText: '確認提交緊急事件'
+                        }
+                      },
+                      {
+                        type: 'button',
+                        style: 'secondary',
+                        action: {
+                          type: 'postback',
+                          label: '❌ 取消',
+                          data: `action=cancel_emergency&session_id=${activeSession.id}`,
+                          displayText: '取消緊急事件回報'
+                        }
+                      }
+                    ]
+                  }
+                }
+              };
+
+              await client.replyMessage(replyToken, confirmFlex);
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+          } catch (sessionErr) {
+            console.error('❌ 會話處理失敗:', sessionErr);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 處理失敗，請稍後重試。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+        }
+
+        // 0.4️⃣ 緊急事件送審 - 方案C：引導式 + 快速選項
+        if (cleanText === '回報緊急事件') {
+          try {
+            // 清除舊的未完成會話
+            await supabase
+              .from('emergency_sessions')
+              .delete()
+              .eq('line_user_id', userId)
+              .neq('status', 'submitted');
+
+            // 建立新會話
+            const { error: sessionErr } = await supabase
+              .from('emergency_sessions')
+              .insert([{
+                line_user_id: userId,
+                status: 'event_type'
+              }]);
+
+            if (sessionErr) {
+              console.error('❌ 建立會話失敗:', sessionErr);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 發生錯誤，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            // 推送事件類型選擇卡片
+            const eventTypesFlex = {
+              type: 'flex',
+              altText: '🚨 請選擇事件類型',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '🚨 請選擇事件類型',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: '點擊下方按鈕或輸入自訂類型',
+                      color: '#999999',
+                      size: 'sm',
+                      wrap: true
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#E74C3C',
+                      action: {
+                        type: 'postback',
+                        label: '🔥 火災',
+                        data: 'action=select_event_type&type=火災',
+                        displayText: '選擇：火災'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#3498DB',
+                      action: {
+                        type: 'postback',
+                        label: '💧 水災',
+                        data: 'action=select_event_type&type=水災',
+                        displayText: '選擇：水災'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#F39C12',
+                      action: {
+                        type: 'postback',
+                        label: '⚡ 停電',
+                        data: 'action=select_event_type&type=停電',
+                        displayText: '選擇：停電'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#9B59B6',
+                      action: {
+                        type: 'postback',
+                        label: '🔧 設備故障',
+                        data: 'action=select_event_type&type=設備故障',
+                        displayText: '選擇：設備故障'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'secondary',
+                      action: {
+                        type: 'postback',
+                        label: '⚠️ 其他',
+                        data: 'action=show_other_types',
+                        displayText: '查看其他選項'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+
+            await client.replyMessage(replyToken, eventTypesFlex);
+            usedReplyTokens.add(replyToken);
+          } catch (err) {
+            console.error('❌ 緊急事件初始化失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 發生錯誤，請稍後再試。'
+            });
+            usedReplyTokens.add(replyToken);
+          }
+          continue;
+        }
+
+
         // 0.5️⃣ 查看最新投票
         if (cleanText === '查看最新投票') {
           try {
@@ -1352,8 +1635,402 @@ export async function POST(req) {
         // 解析 postback data
         const params = new URLSearchParams(data);
         const action = params.get('action');
+        const emergencyEventId = params.get('event_id');
         
         console.log('[DEBUG Postback] action:', action);
+
+        // ===== 處理緊急事件回報流程（方案C） =====
+        if (action === 'select_event_type') {
+          const eventType = params.get('type');
+          try {
+            // 更新會話：保存事件類型並移到下一步
+            const { error: updateErr } = await supabase
+              .from('emergency_sessions')
+              .update({
+                event_type: eventType,
+                status: 'location',
+                updated_at: new Date().toISOString()
+              })
+              .eq('line_user_id', userId)
+              .eq('status', 'event_type');
+
+            if (updateErr) {
+              console.error('❌ 更新會話失敗:', updateErr);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 發生錯誤，請稍後重試。'
+              });
+              continue;
+            }
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: `✅ 已選擇事件類型：${eventType}\n\n📍 請輸入事件地點（例如：A棟3樓、地下室等）`
+            });
+            continue;
+          } catch (err) {
+            console.error('❌ 事件類型選擇失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 發生錯誤，請稍後再試。'
+            });
+            continue;
+          }
+        }
+
+        // 其他選項 - 顯示更多快速選項
+        if (action === 'show_other_types') {
+          try {
+            const otherTypesFlex = {
+              type: 'flex',
+              altText: '📋 更多事件類型',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '📋 更多事件類型',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: '點擊下方或直接輸入自訂類型',
+                      color: '#999999',
+                      size: 'sm',
+                      wrap: true
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#16A34A',
+                      action: {
+                        type: 'postback',
+                        label: '🛗 電梯故障',
+                        data: 'action=select_event_type&type=電梯故障',
+                        displayText: '選擇：電梯故障'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#0891B2',
+                      action: {
+                        type: 'postback',
+                        label: '🌡️ 空調故障',
+                        data: 'action=select_event_type&type=空調故障',
+                        displayText: '選擇：空調故障'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#DC2626',
+                      action: {
+                        type: 'postback',
+                        label: '🔌 電路故障',
+                        data: 'action=select_event_type&type=電路故障',
+                        displayText: '選擇：電路故障'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#9333EA',
+                      action: {
+                        type: 'postback',
+                        label: '🚪 安全門損壞',
+                        data: 'action=select_event_type&type=安全門損壞',
+                        displayText: '選擇：安全門損壞'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+
+            await client.replyMessage(replyToken, otherTypesFlex);
+            await client.pushMessage(userId, {
+              type: 'text',
+              text: '或直接輸入自訂事件類型（例如：漏水、垃圾堆積等）'
+            });
+            continue;
+          } catch (err) {
+            console.error('❌ 顯示其他類型失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 發生錯誤，請稍後再試。'
+            });
+            continue;
+          }
+        }
+
+        // ===== 提交緊急事件 =====
+        if (action === 'submit_emergency') {
+          const sessionId = params.get('session_id');
+          const description = params.get('description');
+
+          try {
+            // 獲取完整會話資訊
+            const { data: session, error: sessionErr } = await supabase
+              .from('emergency_sessions')
+              .select('*')
+              .eq('id', sessionId)
+              .maybeSingle();
+
+            if (sessionErr || !session) {
+              throw new Error('找不到會話');
+            }
+
+            const nowIso = new Date().toISOString();
+            // 寫入緊急報告
+            const { data: createdEmergency, error: emergencyInsertError } = await supabase
+              .from('emergency_reports_line')
+              .insert([{
+                reporter_line_user_id: userId,
+                reporter_profile_id: existingProfile?.id || null,
+                event_type: session.event_type,
+                location: session.location,
+                description: description,
+                status: 'pending',
+                created_at: nowIso,
+                updated_at: nowIso
+              }])
+              .select('id, event_type, location, description, status, created_at')
+              .single();
+
+            if (emergencyInsertError || !createdEmergency) {
+              throw emergencyInsertError || new Error('寫入失敗');
+            }
+
+            // 標記會話為已提交
+            await supabase
+              .from('emergency_sessions')
+              .update({ status: 'submitted', updated_at: nowIso })
+              .eq('id', sessionId);
+
+            // 查詢所有 admin
+            const { data: admins, error: adminQueryError } = await supabase
+              .from('profiles')
+              .select('line_user_id, name')
+              .eq('role', 'admin')
+              .not('line_user_id', 'is', null);
+
+            if (adminQueryError || !admins || admins.length === 0) {
+              throw new Error('找不到管理員');
+            }
+
+            const adminTargets = admins.map(a => a.line_user_id).filter(Boolean);
+
+            // 推送審核卡片給所有 admin
+            const reviewFlex = {
+              type: 'flex',
+              altText: '⚠️ 緊急事件待審核',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    { type: 'text', text: '⚠️ 緊急事件待審核', weight: 'bold', size: 'lg' },
+                    { type: 'separator', margin: 'sm' },
+                    { type: 'text', text: `類型：${createdEmergency.event_type}`, wrap: true },
+                    { type: 'text', text: `地點：${createdEmergency.location}`, wrap: true },
+                    { type: 'text', text: `描述：${createdEmergency.description}`, wrap: true },
+                    { type: 'text', text: '請確認是否發布通知', color: '#666666', size: 'sm', wrap: true }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#1E88E5',
+                      action: {
+                        type: 'postback',
+                        label: '✅ 確認發布',
+                        data: `action=approve&event_id=${createdEmergency.id}`,
+                        displayText: `確認發布事件 ${createdEmergency.id}`
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'secondary',
+                      action: {
+                        type: 'postback',
+                        label: '❌ 駁回',
+                        data: `action=reject&event_id=${createdEmergency.id}`,
+                        displayText: `駁回事件 ${createdEmergency.id}`
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+
+            for (const adminLineId of adminTargets) {
+              await client.pushMessage(adminLineId, reviewFlex);
+            }
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '✅ 緊急事件已送出，已通知管委會審核。'
+            });
+            continue;
+          } catch (err) {
+            console.error('❌ 提交緊急事件失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 提交失敗，請稍後再試。'
+            });
+            continue;
+          }
+        }
+
+        // ===== 取消緊急事件回報 =====
+        if (action === 'cancel_emergency') {
+          const sessionId = params.get('session_id');
+          try {
+            await supabase
+              .from('emergency_sessions')
+              .update({ status: 'submitted', updated_at: new Date().toISOString() })
+              .eq('id', sessionId);
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '已取消緊急事件回報。'
+            });
+            continue;
+          } catch (err) {
+            console.error('❌ 取消失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 取消失敗，請稍後再試。'
+            });
+            continue;
+          }
+        }
+
+        // ===== 處理緊急事件審核（admin） =====
+        if ((action === 'approve' || action === 'reject') && emergencyEventId) {
+          try {
+            // 檢查操作者是否為 admin
+            const { data: adminProfile, error: adminProfileErr } = await supabase
+              .from('profiles')
+              .select('id, name, role')
+              .eq('line_user_id', userId)
+              .maybeSingle();
+
+            if (adminProfileErr) {
+              console.error('[Emergency Review] 查詢 admin 身分失敗:', adminProfileErr);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 審核失敗，請稍後再試。'
+              });
+              continue;
+            }
+
+            if (!adminProfile || adminProfile.role !== 'admin') {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⛔ 您沒有審核權限。'
+              });
+              continue;
+            }
+
+            // 讀取事件
+            const { data: emergencyEvent, error: eventQueryErr } = await supabase
+              .from('emergency_reports_line')
+              .select('id, event_type, location, description, status')
+              .eq('id', emergencyEventId)
+              .maybeSingle();
+
+            if (eventQueryErr || !emergencyEvent) {
+              console.error('[Emergency Review] 查詢事件失敗:', eventQueryErr);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 找不到此緊急事件，可能已被處理。'
+              });
+              continue;
+            }
+
+            if (emergencyEvent.status !== 'pending') {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: `ℹ️ 此事件目前狀態為「${emergencyEvent.status}」，無法重複審核。`
+              });
+              continue;
+            }
+
+            const newStatus = action === 'approve' ? 'approved' : 'rejected';
+            const { error: updateErr } = await supabase
+              .from('emergency_reports_line')
+              .update({
+                status: newStatus,
+                reviewed_by: adminProfile.id,
+                reviewed_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', emergencyEventId);
+
+            if (updateErr) {
+              console.error('[Emergency Review] 更新狀態失敗:', updateErr);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 審核更新失敗，請稍後再試。'
+              });
+              continue;
+            }
+
+            // 確認發布 -> 廣播給所有住戶
+            if (action === 'approve') {
+              const broadcastText =
+                `🚨【緊急事件通知】\n` +
+                `類型：${emergencyEvent.event_type || '未指定'}\n` +
+                `地點：${emergencyEvent.location || '未指定'}\n` +
+                `描述：${emergencyEvent.description || '未提供'}\n\n` +
+                `請住戶留意安全並配合現場指示。`;
+
+              await client.broadcast({ type: 'text', text: broadcastText });
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '✅ 已確認發布，緊急事件通知已廣播給所有住戶。'
+              });
+              continue;
+            }
+
+            // 駁回
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 已駁回此緊急事件，不會進行廣播。'
+            });
+            continue;
+          } catch (reviewErr) {
+            console.error('[Emergency Review] 處理失敗:', reviewErr);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 審核處理失敗，請稍後再試。'
+            });
+            continue;
+          }
+        }
         
         // ===== 處理澄清選項 =====
         if (action === 'clarify') {
