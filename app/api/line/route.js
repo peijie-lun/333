@@ -630,8 +630,8 @@ export async function POST(req) {
                 `標題：${latestVote.title || '未提供'}\n` +
                 `狀態：${statusText}\n` +
                 `選項：${optionsText}\n` +
-                `截止時間：${endsAtText}\n` +
                 `建立時間：${createdAtText}\n` +
+                `截止時間：${endsAtText}\n` +
                 `說明：${latestVote.description || '無'}`
             });
             usedReplyTokens.add(replyToken);
