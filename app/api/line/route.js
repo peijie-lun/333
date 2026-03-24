@@ -574,6 +574,80 @@ export async function POST(req) {
           continue;
         }
 
+        // 0.5️⃣ 查看最新投票
+        if (cleanText === '查看最新投票') {
+          try {
+            const { data: latestVote, error: voteQueryError } = await supabase
+              .from('votes')
+              .select('id, title, description, options, created_at, ends_at, status')
+              .eq('status', 'active')
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (voteQueryError) {
+              console.error('❌ 查詢最新投票失敗:', voteQueryError);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 查詢最新投票失敗，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            if (!latestVote) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '📭 目前沒有進行中的投票。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            let optionsText = '未提供';
+            if (Array.isArray(latestVote.options) && latestVote.options.length > 0) {
+              optionsText = latestVote.options.join('、');
+            } else if (typeof latestVote.options === 'string' && latestVote.options.trim()) {
+              optionsText = latestVote.options;
+            }
+
+            const createdAtText = latestVote.created_at
+              ? new Date(latestVote.created_at).toLocaleString('zh-TW', { hour12: false })
+              : '未提供';
+            const endsAtText = latestVote.ends_at
+              ? new Date(latestVote.ends_at).toLocaleString('zh-TW', { hour12: false })
+              : '未設定';
+            const statusMap = {
+              active: '🟢 進行中',
+              closed: '⚪ 已結束'
+            };
+            const statusText = statusMap[latestVote.status] || latestVote.status || '未知';
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text:
+                `🗳️ 最新投票資訊\n` +
+                `標題：${latestVote.title || '未提供'}\n` +
+                `狀態：${statusText}\n` +
+                `選項：${optionsText}\n` +
+                `截止時間：${endsAtText}\n` +
+                `建立時間：${createdAtText}\n` +
+                `說明：${latestVote.description || '無'}`
+            });
+            usedReplyTokens.add(replyToken);
+          } catch (err) {
+            console.error('❌ 最新投票查詢例外:', err);
+            if (!usedReplyTokens.has(replyToken)) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 查詢最新投票失敗，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+            }
+          }
+          continue;
+        }
+
         // 2️⃣ 公共設施
         if (userText.includes('公共設施')) {
           const carouselMessage = {
