@@ -83,7 +83,7 @@ export async function POST(req) {
       // --- 1. 檢查使用者是否已存在 profiles ---
       const { data: existingProfile, error: checkError } = await supabase
         .from('profiles')
-        .select('id, line_user_id, line_display_name, line_avatar_url, line_status_message')
+        .select('id, name, unit_id, line_user_id, line_display_name, line_avatar_url, line_status_message')
         .eq('line_user_id', userId)
         .maybeSingle();
 
@@ -633,6 +633,105 @@ export async function POST(req) {
 
           await client.replyMessage(replyToken, carouselMessage);
           usedReplyTokens.add(replyToken);
+          continue;
+        }
+
+        // 1.5️⃣ 包裹最新狀態查詢（依 LINE 使用者綁定單位查最新一筆）
+        const normalizedUserText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '');
+        const isPackageQuery = normalizedUserText === '查詢我的包裹';
+
+        if (isPackageQuery) {
+          try {
+            // 優先使用本次已查到的 profile，必要時補查 unit_id
+            let profileForPackage = existingProfile;
+
+            if (!profileForPackage?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForPackage = {
+                  ...existingProfile,
+                  ...profileWithUnit
+                };
+              }
+            }
+
+            if (!profileForPackage?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定，暫時無法查詢包裹狀態。\n請先完成 LINE 帳號綁定後再試一次。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            const { data: latestPackage, error: packageError } = await supabase
+              .from('packages')
+              .select('id, courier, tracking_number, status, arrived_at, created_at, updated_at')
+              .eq('unit_id', profileForPackage.unit_id)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            const { data: unitData } = await supabase
+              .from('units')
+              .select('unit_number, unit_code')
+              .eq('id', profileForPackage.unit_id)
+              .maybeSingle();
+
+            if (packageError) {
+              throw packageError;
+            }
+
+            if (!latestPackage) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '📦 目前查不到您的包裹資料。\n若您剛收到通知，請稍後再查詢。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            const packageStatusMap = {
+              pending: '🟡 未領取（待領取）',
+              notified: '🔔 未領取（已通知）',
+              picked_up: '✅ 已領取',
+              delivered: '✅ 已送達',
+              returned: '↩️ 已退回',
+              cancelled: '❌ 已取消'
+            };
+
+            const statusText = packageStatusMap[latestPackage.status] || `ℹ️ ${latestPackage.status || '未知狀態'}`;
+            const arrivedAtText = latestPackage.arrived_at
+              ? new Date(latestPackage.arrived_at).toLocaleString('zh-TW', { hour12: false })
+              : '未提供';
+            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text:
+                `📦 您最新一筆包裹狀態\n` +
+                `狀態：${statusText}\n` +
+                `快遞公司：${latestPackage.courier || '未提供'}\n` +
+                `房號：${roomText}\n` +
+                `追蹤號碼：${latestPackage.tracking_number || '未提供'}\n` +
+                `到件時間：${arrivedAtText}`
+            });
+            usedReplyTokens.add(replyToken);
+          } catch (pkgErr) {
+            console.error('❌ 包裹查詢失敗:', pkgErr);
+            if (!usedReplyTokens.has(replyToken)) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 包裹查詢失敗，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+            }
+          }
           continue;
         }
 
