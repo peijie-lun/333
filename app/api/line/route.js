@@ -143,6 +143,7 @@ export async function POST(req) {
         const ignoreKeywords = [
           '本系統可以',
           '查詢社區相關問題',
+          '輸入問題立即獲得解答',
           '查看熱門常見問題',
           '接收推播',
           '歡迎直接輸入查詢',
