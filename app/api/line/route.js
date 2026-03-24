@@ -698,11 +698,7 @@ export async function POST(req) {
 
             const packageStatusMap = {
               pending: '🟡 未領取（待領取）',
-              notified: '🔔 未領取（已通知）',
               picked_up: '✅ 已領取',
-              delivered: '✅ 已送達',
-              returned: '↩️ 已退回',
-              cancelled: '❌ 已取消'
             };
 
             const statusText = packageStatusMap[latestPackage.status] || `ℹ️ ${latestPackage.status || '未知狀態'}`;
