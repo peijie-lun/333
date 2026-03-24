@@ -830,6 +830,17 @@ export async function POST(req) {
                     },
                     {
                       type: 'button',
+                      style: 'primary',
+                      color: '#EF4444',
+                      action: {
+                        type: 'postback',
+                        label: '🕵️ 可疑人員',
+                        data: 'action=select_event_type&type=可疑人員',
+                        displayText: '選擇：可疑人員'
+                      }
+                    },
+                    {
+                      type: 'button',
                       style: 'secondary',
                       action: {
                         type: 'postback',
