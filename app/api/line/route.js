@@ -647,6 +647,29 @@ export async function POST(req) {
             }
 
             if (activeSession.status === 'description') {
+              const normalizedDescription = userText.trim();
+
+              if (!normalizedDescription) {
+                await client.replyMessage(replyToken, {
+                  type: 'text',
+                  text: '⚠️ 事件描述不可空白，請重新輸入。'
+                });
+                usedReplyTokens.add(replyToken);
+                continue;
+              }
+
+              const { error: saveDescErr } = await supabase
+                .from('emergency_sessions')
+                .update({
+                  description: normalizedDescription,
+                  status: 'confirm',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', activeSession.id)
+                .eq('status', 'description');
+
+              if (saveDescErr) throw saveDescErr;
+
               // 使用者輸入描述，顯示確認卡片
               const confirmFlex = {
                 type: 'flex',
@@ -687,7 +710,7 @@ export async function POST(req) {
                           },
                           {
                             type: 'text',
-                            text: `🔹 描述：${userText}`,
+                            text: `🔹 描述：${normalizedDescription}`,
                             wrap: true,
                             size: 'sm',
                             color: '#666666'
@@ -708,7 +731,7 @@ export async function POST(req) {
                         action: {
                           type: 'postback',
                           label: '✅ 確認提交',
-                          data: `action=submit_emergency&session_id=${activeSession.id}&description=${encodeURIComponent(userText)}`,
+                          data: `action=submit_emergency&session_id=${activeSession.id}`,
                           displayText: '確認提交緊急事件'
                         }
                       },
@@ -1811,21 +1834,36 @@ export async function POST(req) {
         // ===== 提交緊急事件 =====
         if (action === 'submit_emergency') {
           const sessionId = params.get('session_id');
-          const description = params.get('description');
 
           try {
-            // 獲取完整會話資訊
+            const nowIso = new Date().toISOString();
+
+            // 原子鎖定：只有 status=confirm 的會話才能被提交，避免重複寫入
             const { data: session, error: sessionErr } = await supabase
               .from('emergency_sessions')
-              .select('*')
+              .update({
+                status: 'submitted',
+                updated_at: nowIso
+              })
               .eq('id', sessionId)
+              .eq('line_user_id', userId)
+              .eq('status', 'confirm')
+              .select('id, event_type, location, description')
               .maybeSingle();
 
-            if (sessionErr || !session) {
-              throw new Error('找不到會話');
+            if (sessionErr) {
+              throw sessionErr;
             }
 
-            const nowIso = new Date().toISOString();
+            if (!session) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: 'ℹ️ 這筆緊急事件已處理或已提交，請勿重複送出。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
             // 寫入緊急報告
             const { data: createdEmergency, error: emergencyInsertError } = await supabase
               .from('emergency_reports_line')
@@ -1834,7 +1872,7 @@ export async function POST(req) {
                 reporter_profile_id: existingProfile?.id || null,
                 event_type: session.event_type,
                 location: session.location,
-                description: description,
+                description: session.description || '未提供',
                 status: 'pending',
                 created_at: nowIso,
                 updated_at: nowIso
@@ -1845,12 +1883,6 @@ export async function POST(req) {
             if (emergencyInsertError || !createdEmergency) {
               throw emergencyInsertError || new Error('寫入失敗');
             }
-
-            // 標記會話為已提交
-            await supabase
-              .from('emergency_sessions')
-              .update({ status: 'submitted', updated_at: nowIso })
-              .eq('id', sessionId);
 
             // 查詢所有 admin
             const { data: admins, error: adminQueryError } = await supabase
@@ -1923,6 +1955,7 @@ export async function POST(req) {
               type: 'text',
               text: '✅ 緊急事件已送出，已通知管委會審核。'
             });
+            usedReplyTokens.add(replyToken);
             continue;
           } catch (err) {
             console.error('❌ 提交緊急事件失敗:', err);
@@ -1930,6 +1963,7 @@ export async function POST(req) {
               type: 'text',
               text: '❌ 提交失敗，請稍後再試。'
             });
+            usedReplyTokens.add(replyToken);
             continue;
           }
         }
