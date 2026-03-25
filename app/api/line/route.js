@@ -1884,20 +1884,36 @@ export async function POST(req) {
               throw emergencyInsertError || new Error('寫入失敗');
             }
 
-            // 查詢所有 admin
+            // 查詢所有管委會（committee）
             const { data: admins, error: adminQueryError } = await supabase
               .from('profiles')
               .select('line_user_id, name')
-              .eq('role', 'admin')
+              .eq('role', 'committee')
               .not('line_user_id', 'is', null);
 
-            if (adminQueryError || !admins || admins.length === 0) {
-              throw new Error('找不到管理員');
+            if (adminQueryError) {
+              console.error('⚠️ 查詢管理員失敗，但通報已建立:', adminQueryError);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '✅ 緊急事件已送出。\n⚠️ 目前通知管委會失敗，請稍後確認管理員帳號設定。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
             }
 
-            const adminTargets = admins.map(a => a.line_user_id).filter(Boolean);
+            const adminTargets = (admins || []).map(a => a.line_user_id).filter(Boolean);
 
-            // 推送審核卡片給所有 admin
+            if (adminTargets.length === 0) {
+              console.warn('⚠️ 查無可通知的管理員 line_user_id，但通報已建立');
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '✅ 緊急事件已送出。\n⚠️ 目前尚未設定可通知的管理員帳號。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            // 推送審核卡片給所有管委會
             const reviewFlex = {
               type: 'flex',
               altText: '⚠️ 緊急事件待審核',
@@ -1948,7 +1964,11 @@ export async function POST(req) {
             };
 
             for (const adminLineId of adminTargets) {
-              await client.pushMessage(adminLineId, reviewFlex);
+              try {
+                await client.pushMessage(adminLineId, reviewFlex);
+              } catch (pushErr) {
+                console.error('⚠️ 推送管理員審核卡片失敗:', adminLineId, pushErr);
+              }
             }
 
             await client.replyMessage(replyToken, {
@@ -1992,10 +2012,10 @@ export async function POST(req) {
           }
         }
 
-        // ===== 處理緊急事件審核（admin） =====
+        // ===== 處理緊急事件審核（committee） =====
         if ((action === 'approve' || action === 'reject') && emergencyEventId) {
           try {
-            // 檢查操作者是否為 admin
+            // 檢查操作者是否為管委會（committee）
             const { data: adminProfile, error: adminProfileErr } = await supabase
               .from('profiles')
               .select('id, name, role')
@@ -2003,7 +2023,7 @@ export async function POST(req) {
               .maybeSingle();
 
             if (adminProfileErr) {
-              console.error('[Emergency Review] 查詢 admin 身分失敗:', adminProfileErr);
+              console.error('[Emergency Review] 查詢 committee 身分失敗:', adminProfileErr);
               await client.replyMessage(replyToken, {
                 type: 'text',
                 text: '❌ 審核失敗，請稍後再試。'
@@ -2011,7 +2031,7 @@ export async function POST(req) {
               continue;
             }
 
-            if (!adminProfile || adminProfile.role !== 'admin') {
+            if (!adminProfile || adminProfile.role !== 'committee') {
               await client.replyMessage(replyToken, {
                 type: 'text',
                 text: '⛔ 您沒有審核權限。'
