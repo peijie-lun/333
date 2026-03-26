@@ -1,5 +1,7 @@
 import { Client, validateSignature } from '@line/bot-sdk';
 import { createClient } from '@supabase/supabase-js';
+import { fileTypeFromBuffer } from 'file-type';
+import heicConvert from 'heic-convert';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -16,6 +18,102 @@ const lineConfig = {
 };
 
 const client = new Client(lineConfig);// LINE Bot SDK 客戶端
+const emergencyImageBucket = process.env.SUPABASE_EMERGENCY_IMAGE_BUCKET || 'emergency_images';
+
+async function streamToBuffer(stream) {
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+function makeImageProcessingError(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
+
+function isHeifType(detected) {
+  if (!detected) return false;
+  const ext = (detected.ext || '').toLowerCase();
+  const mime = (detected.mime || '').toLowerCase();
+  return ext === 'heic' || ext === 'heif' || mime.includes('heic') || mime.includes('heif');
+}
+
+async function normalizeEmergencyImageBuffer(inputBuffer) {
+  const detected = await fileTypeFromBuffer(inputBuffer);
+
+  if (!detected) {
+    throw makeImageProcessingError('UNSUPPORTED_IMAGE_FORMAT', '無法辨識圖片格式');
+  }
+
+  if (isHeifType(detected)) {
+    try {
+      const converted = await heicConvert({
+        buffer: inputBuffer,
+        format: 'JPEG',
+        quality: 0.9
+      });
+
+      return {
+        buffer: Buffer.from(converted),
+        ext: 'jpg',
+        contentType: 'image/jpeg'
+      };
+    } catch (convertErr) {
+      console.error('❌ HEIF 轉檔失敗:', convertErr);
+      throw makeImageProcessingError('HEIF_CONVERT_FAILED', 'HEIF 轉 JPEG 失敗');
+    }
+  }
+
+  const ext = (detected.ext || '').toLowerCase();
+  const mime = (detected.mime || '').toLowerCase();
+
+  if (mime === 'image/jpeg' || mime === 'image/jpg') {
+    return { buffer: inputBuffer, ext: 'jpg', contentType: 'image/jpeg' };
+  }
+
+  if (mime === 'image/png') {
+    return { buffer: inputBuffer, ext: 'png', contentType: 'image/png' };
+  }
+
+  throw makeImageProcessingError('UNSUPPORTED_IMAGE_FORMAT', `不支援的圖片格式: ${ext || mime}`);
+}
+
+async function uploadEmergencyImageFromLineMessage(messageId, userId) {
+  const messageStream = await client.getMessageContent(messageId);
+  const rawImageBuffer = await streamToBuffer(messageStream);
+  const normalizedImage = await normalizeEmergencyImageBuffer(rawImageBuffer);
+  const filePath = `line-emergency/${new Date().toISOString().slice(0, 10)}/${userId}_${messageId}.${normalizedImage.ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(emergencyImageBucket)
+    .upload(filePath, normalizedImage.buffer, {
+      contentType: normalizedImage.contentType,
+      upsert: false
+    });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const { data: publicUrlData } = supabase.storage.from(emergencyImageBucket).getPublicUrl(filePath);
+  let imageUrl = publicUrlData?.publicUrl || null;
+
+  if (!imageUrl) {
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(emergencyImageBucket)
+      .createSignedUrl(filePath, 60 * 60 * 24 * 7);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      throw signedUrlError || new Error('建立圖片連結失敗');
+    }
+    imageUrl = signedUrlData.signedUrl;
+  }
+
+  return imageUrl;
+}
 
 // 記憶體暫存報修會話資料（取代資料庫草稿）
 const repairSessions = new Map();
@@ -577,7 +675,7 @@ export async function POST(req) {
         // ===== 檢查是否有進行中的緊急事件會話 =====
         const { data: activeSession, error: sessionCheckErr } = await supabase
           .from('emergency_sessions')
-          .select('id, event_type, location, status')
+          .select('id, event_type, location, status, image_url')
           .eq('line_user_id', userId)
           .neq('status', 'submitted')
           .order('updated_at', { ascending: false })
@@ -751,6 +849,15 @@ export async function POST(req) {
               };
 
               await client.replyMessage(replyToken, confirmFlex);
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            if (activeSession.status === 'confirm') {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: 'ℹ️ 您的緊急事件內容已填寫完成，請點擊「✅ 確認提交」送出；若要重填請輸入「回報緊急事件」。'
+              });
               usedReplyTokens.add(replyToken);
               continue;
             }
@@ -1669,6 +1776,74 @@ export async function POST(req) {
           console.error('[報修-圖片] 處理最近報修單失敗:', err);
         }
 
+        // 緊急事件流程的圖片上傳
+        try {
+          const { data: activeEmergencySession } = await supabase
+            .from('emergency_sessions')
+            .select('id, status')
+            .eq('line_user_id', userId)
+            .neq('status', 'submitted')
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (activeEmergencySession) {
+            const uploadedImageUrl = await uploadEmergencyImageFromLineMessage(messageId, userId);
+
+            const { error: saveImageErr } = await supabase
+              .from('emergency_sessions')
+              .update({
+                image_url: uploadedImageUrl,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', activeEmergencySession.id);
+
+            if (saveImageErr) {
+              console.error('❌ 緊急事件圖片保存失敗:', saveImageErr);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 圖片上傳失敗，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            let nextStepText = '✅ 圖片已附加到本次緊急事件。';
+            if (activeEmergencySession.status === 'event_type') {
+              nextStepText += '\n請先選擇或輸入事件類型。';
+            } else if (activeEmergencySession.status === 'location') {
+              nextStepText += '\n請繼續輸入事件地點。';
+            } else if (activeEmergencySession.status === 'description') {
+              nextStepText += '\n請繼續輸入事件描述。';
+            } else if (activeEmergencySession.status === 'confirm') {
+              nextStepText += '\n請點擊「✅ 確認提交」送出。';
+            }
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: nextStepText
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+        } catch (emergencyImageErr) {
+          console.error('❌ 緊急事件圖片處理失敗:', emergencyImageErr);
+          if (!usedReplyTokens.has(replyToken)) {
+            let emergencyImageErrorText = '❌ 圖片處理失敗，請稍後再試。';
+            if (emergencyImageErr?.code === 'HEIF_CONVERT_FAILED') {
+              emergencyImageErrorText = '❌ HEIF 圖片轉檔失敗，請重新上傳 JPG/PNG 圖片。';
+            } else if (emergencyImageErr?.code === 'UNSUPPORTED_IMAGE_FORMAT') {
+              emergencyImageErrorText = '⚠️ 目前僅支援 JPG/PNG 圖片，請重新上傳。';
+            }
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: emergencyImageErrorText
+            });
+            usedReplyTokens.add(replyToken);
+          }
+          continue;
+        }
+
         // 非報修流程的圖片訊息，回覆提示
         console.log('[報修-圖片] ❌ 非報修流程或找不到相關報修單');
         await client.replyMessage(replyToken, {
@@ -1848,7 +2023,7 @@ export async function POST(req) {
               .eq('id', sessionId)
               .eq('line_user_id', userId)
               .eq('status', 'confirm')
-              .select('id, event_type, location, description')
+              .select('id, event_type, location, description, image_url')
               .maybeSingle();
 
             if (sessionErr) {
@@ -1873,11 +2048,12 @@ export async function POST(req) {
                 event_type: session.event_type,
                 location: session.location,
                 description: session.description || '未提供',
+                image_url: session.image_url || null,
                 status: 'pending',
                 created_at: nowIso,
                 updated_at: nowIso
               }])
-              .select('id, event_type, location, description, status, created_at')
+              .select('id, event_type, location, description, image_url, status, created_at')
               .single();
 
             if (emergencyInsertError || !createdEmergency) {
@@ -1914,53 +2090,66 @@ export async function POST(req) {
             }
 
             // 推送審核卡片給所有管委會
+            const reviewBubble = {
+              type: 'bubble',
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'md',
+                contents: [
+                  { type: 'text', text: '⚠️ 緊急事件待審核', weight: 'bold', size: 'lg' },
+                  { type: 'separator', margin: 'sm' },
+                  { type: 'text', text: `類型：${createdEmergency.event_type}`, wrap: true },
+                  { type: 'text', text: `地點：${createdEmergency.location}`, wrap: true },
+                  { type: 'text', text: `描述：${createdEmergency.description}`, wrap: true },
+                  { type: 'text', text: `附圖：${createdEmergency.image_url ? '有' : '無'}`, wrap: true },
+                  { type: 'text', text: '請確認是否發布通知', color: '#666666', size: 'sm', wrap: true }
+                ]
+              },
+              footer: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'sm',
+                contents: [
+                  {
+                    type: 'button',
+                    style: 'primary',
+                    color: '#1E88E5',
+                    action: {
+                      type: 'postback',
+                      label: '✅ 確認發布',
+                      data: `action=approve&event_id=${createdEmergency.id}`,
+                      displayText: `確認發布事件 ${createdEmergency.id}`
+                    }
+                  },
+                  {
+                    type: 'button',
+                    style: 'secondary',
+                    action: {
+                      type: 'postback',
+                      label: '❌ 駁回',
+                      data: `action=reject&event_id=${createdEmergency.id}`,
+                      displayText: `駁回事件 ${createdEmergency.id}`
+                    }
+                  }
+                ]
+              }
+            };
+
+            if (createdEmergency.image_url) {
+              reviewBubble.hero = {
+                type: 'image',
+                url: createdEmergency.image_url,
+                size: 'full',
+                aspectRatio: '20:13',
+                aspectMode: 'cover'
+              };
+            }
+
             const reviewFlex = {
               type: 'flex',
               altText: '⚠️ 緊急事件待審核',
-              contents: {
-                type: 'bubble',
-                body: {
-                  type: 'box',
-                  layout: 'vertical',
-                  spacing: 'md',
-                  contents: [
-                    { type: 'text', text: '⚠️ 緊急事件待審核', weight: 'bold', size: 'lg' },
-                    { type: 'separator', margin: 'sm' },
-                    { type: 'text', text: `類型：${createdEmergency.event_type}`, wrap: true },
-                    { type: 'text', text: `地點：${createdEmergency.location}`, wrap: true },
-                    { type: 'text', text: `描述：${createdEmergency.description}`, wrap: true },
-                    { type: 'text', text: '請確認是否發布通知', color: '#666666', size: 'sm', wrap: true }
-                  ]
-                },
-                footer: {
-                  type: 'box',
-                  layout: 'vertical',
-                  spacing: 'sm',
-                  contents: [
-                    {
-                      type: 'button',
-                      style: 'primary',
-                      color: '#1E88E5',
-                      action: {
-                        type: 'postback',
-                        label: '✅ 確認發布',
-                        data: `action=approve&event_id=${createdEmergency.id}`,
-                        displayText: `確認發布事件 ${createdEmergency.id}`
-                      }
-                    },
-                    {
-                      type: 'button',
-                      style: 'secondary',
-                      action: {
-                        type: 'postback',
-                        label: '❌ 駁回',
-                        data: `action=reject&event_id=${createdEmergency.id}`,
-                        displayText: `駁回事件 ${createdEmergency.id}`
-                      }
-                    }
-                  ]
-                }
-              }
+              contents: reviewBubble
             };
 
             for (const adminLineId of adminTargets) {
@@ -2042,7 +2231,7 @@ export async function POST(req) {
             // 讀取事件
             const { data: emergencyEvent, error: eventQueryErr } = await supabase
               .from('emergency_reports_line')
-              .select('id, event_type, location, description, status')
+              .select('id, event_type, location, description, image_url, status')
               .eq('id', emergencyEventId)
               .maybeSingle();
 
@@ -2092,7 +2281,18 @@ export async function POST(req) {
                 `描述：${emergencyEvent.description || '未提供'}\n\n` +
                 `請住戶留意安全並配合現場指示。`;
 
-              await client.broadcast({ type: 'text', text: broadcastText });
+              if (emergencyEvent.image_url) {
+                await client.broadcast([
+                  { type: 'text', text: broadcastText },
+                  {
+                    type: 'image',
+                    originalContentUrl: emergencyEvent.image_url,
+                    previewImageUrl: emergencyEvent.image_url
+                  }
+                ]);
+              } else {
+                await client.broadcast({ type: 'text', text: broadcastText });
+              }
               await client.replyMessage(replyToken, {
                 type: 'text',
                 text: '✅ 已確認發布，緊急事件通知已廣播給所有住戶。'
