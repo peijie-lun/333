@@ -115,6 +115,106 @@ async function uploadEmergencyImageFromLineMessage(messageId, userId) {
   return imageUrl;
 }
 
+function buildEmergencyConfirmFlex(sessionId, eventType, location, description, imageUrl) {
+  const bubble = {
+    type: 'bubble',
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      contents: [
+        {
+          type: 'text',
+          text: '📋 確認事件資訊',
+          weight: 'bold',
+          size: 'lg',
+          wrap: true
+        },
+        { type: 'separator', margin: 'md' },
+        {
+          type: 'box',
+          layout: 'vertical',
+          spacing: 'sm',
+          contents: [
+            {
+              type: 'text',
+              text: `🔹 類型：${eventType || '未指定'}`,
+              wrap: true,
+              size: 'sm',
+              color: '#666666'
+            },
+            {
+              type: 'text',
+              text: `🔹 地點：${location || '未指定'}`,
+              wrap: true,
+              size: 'sm',
+              color: '#666666'
+            },
+            {
+              type: 'text',
+              text: `🔹 描述：${description || '未提供'}`,
+              wrap: true,
+              size: 'sm',
+              color: '#666666'
+            },
+            {
+              type: 'text',
+              text: `🔹 附圖：${imageUrl ? '已附加' : '略過'}`,
+              wrap: true,
+              size: 'sm',
+              color: '#666666'
+            }
+          ]
+        }
+      ]
+    },
+    footer: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'sm',
+      contents: [
+        {
+          type: 'button',
+          style: 'primary',
+          color: '#22C55E',
+          action: {
+            type: 'postback',
+            label: '✅ 確認提交',
+            data: `action=submit_emergency&session_id=${sessionId}`,
+            displayText: '確認提交緊急事件'
+          }
+        },
+        {
+          type: 'button',
+          style: 'secondary',
+          action: {
+            type: 'postback',
+            label: '❌ 取消',
+            data: `action=cancel_emergency&session_id=${sessionId}`,
+            displayText: '取消緊急事件回報'
+          }
+        }
+      ]
+    }
+  };
+
+  if (imageUrl) {
+    bubble.hero = {
+      type: 'image',
+      url: imageUrl,
+      size: 'full',
+      aspectRatio: '20:13',
+      aspectMode: 'cover'
+    };
+  }
+
+  return {
+    type: 'flex',
+    altText: '📋 確認事件資訊',
+    contents: bubble
+  };
+}
+
 // 記憶體暫存報修會話資料（取代資料庫草稿）
 const repairSessions = new Map();
 // 結構：{ userId: { location: string, description: string, startTime: timestamp } }
@@ -675,7 +775,7 @@ export async function POST(req) {
         // ===== 檢查是否有進行中的緊急事件會話 =====
         const { data: activeSession, error: sessionCheckErr } = await supabase
           .from('emergency_sessions')
-          .select('id, event_type, location, status, image_url')
+          .select('id, event_type, location, description, status, image_url')
           .eq('line_user_id', userId)
           .neq('status', 'submitted')
           .order('updated_at', { ascending: false })
@@ -768,95 +868,32 @@ export async function POST(req) {
 
               if (saveDescErr) throw saveDescErr;
 
-              // 使用者輸入描述，顯示確認卡片
-              const confirmFlex = {
-                type: 'flex',
-                altText: '📋 確認事件資訊',
-                contents: {
-                  type: 'bubble',
-                  body: {
-                    type: 'box',
-                    layout: 'vertical',
-                    spacing: 'md',
-                    contents: [
-                      {
-                        type: 'text',
-                        text: '📋 確認事件資訊',
-                        weight: 'bold',
-                        size: 'lg',
-                        wrap: true
-                      },
-                      { type: 'separator', margin: 'md' },
-                      {
-                        type: 'box',
-                        layout: 'vertical',
-                        spacing: 'sm',
-                        contents: [
-                          {
-                            type: 'text',
-                            text: `🔹 類型：${activeSession.event_type}`,
-                            wrap: true,
-                            size: 'sm',
-                            color: '#666666'
-                          },
-                          {
-                            type: 'text',
-                            text: `🔹 地點：${activeSession.location}`,
-                            wrap: true,
-                            size: 'sm',
-                            color: '#666666'
-                          },
-                          {
-                            type: 'text',
-                            text: `🔹 描述：${normalizedDescription}`,
-                            wrap: true,
-                            size: 'sm',
-                            color: '#666666'
-                          }
-                        ]
-                      }
-                    ]
-                  },
-                  footer: {
-                    type: 'box',
-                    layout: 'vertical',
-                    spacing: 'sm',
-                    contents: [
-                      {
-                        type: 'button',
-                        style: 'primary',
-                        color: '#22C55E',
-                        action: {
-                          type: 'postback',
-                          label: '✅ 確認提交',
-                          data: `action=submit_emergency&session_id=${activeSession.id}`,
-                          displayText: '確認提交緊急事件'
-                        }
-                      },
-                      {
-                        type: 'button',
-                        style: 'secondary',
-                        action: {
-                          type: 'postback',
-                          label: '❌ 取消',
-                          data: `action=cancel_emergency&session_id=${activeSession.id}`,
-                          displayText: '取消緊急事件回報'
-                        }
-                      }
-                    ]
-                  }
-                }
-              };
-
-              await client.replyMessage(replyToken, confirmFlex);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '✅ 事件描述已記錄。\n📷 請上傳圖片，或輸入「略過」/「跳過」跳過照片上傳。'
+              });
               usedReplyTokens.add(replyToken);
               continue;
             }
 
             if (activeSession.status === 'confirm') {
+              if (userText === '略過' || userText === '跳過') {
+                const confirmFlex = buildEmergencyConfirmFlex(
+                  activeSession.id,
+                  activeSession.event_type,
+                  activeSession.location,
+                  activeSession.description,
+                  activeSession.image_url
+                );
+
+                await client.replyMessage(replyToken, confirmFlex);
+                usedReplyTokens.add(replyToken);
+                continue;
+              }
+
               await client.replyMessage(replyToken, {
                 type: 'text',
-                text: 'ℹ️ 您的緊急事件內容已填寫完成，請點擊「✅ 確認提交」送出；若要重填請輸入「回報緊急事件」。'
+                text: '📷 請上傳圖片，或輸入「略過」/「跳過」後送出確認。\n若要重填請輸入「回報緊急事件」。'
               });
               usedReplyTokens.add(replyToken);
               continue;
@@ -1780,7 +1817,7 @@ export async function POST(req) {
         try {
           const { data: activeEmergencySession } = await supabase
             .from('emergency_sessions')
-            .select('id, status')
+            .select('id, status, event_type, location, description')
             .eq('line_user_id', userId)
             .neq('status', 'submitted')
             .order('updated_at', { ascending: false })
@@ -1816,7 +1853,19 @@ export async function POST(req) {
             } else if (activeEmergencySession.status === 'description') {
               nextStepText += '\n請繼續輸入事件描述。';
             } else if (activeEmergencySession.status === 'confirm') {
-              nextStepText += '\n請點擊「✅ 確認提交」送出。';
+              const confirmFlex = buildEmergencyConfirmFlex(
+                activeEmergencySession.id,
+                activeEmergencySession.event_type,
+                activeEmergencySession.location,
+                activeEmergencySession.description,
+                uploadedImageUrl
+              );
+              await client.replyMessage(replyToken, [
+                { type: 'text', text: nextStepText },
+                confirmFlex
+              ]);
+              usedReplyTokens.add(replyToken);
+              continue;
             }
 
             await client.replyMessage(replyToken, {
