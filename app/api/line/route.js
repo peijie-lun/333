@@ -257,6 +257,18 @@ const repairSessions = new Map();
 // 追蹤已使用的 replyToken（防止重複處理）
 const usedReplyTokens = new Set();
 
+// 追蹤已處理的 webhook event（防止 LINE redelivery 造成重複訊息）
+const processedWebhookEvents = new Map();
+const WEBHOOK_EVENT_TTL_MS = 10 * 60 * 1000; // 10 分鐘
+
+function cleanupProcessedWebhookEvents(now = Date.now()) {
+  for (const [eventId, ts] of processedWebhookEvents.entries()) {
+    if (now - ts > WEBHOOK_EVENT_TTL_MS) {
+      processedWebhookEvents.delete(eventId);
+    }
+  }
+}
+
 // 移除圖片關鍵字攔截，讓所有查詢都進入 AI 處理
 // const IMAGE_KEYWORDS = ['圖片', '設施', '游泳池', '健身房', '大廳'];
 // 處理 LINE Webhook 請求
@@ -297,6 +309,27 @@ export async function POST(req) {
     for (const event of events) {// 逐一處理每個事件
       const userId = event.source?.userId;
       if (!userId) continue;
+
+      // 去重：同一 webhookEventId 不重複處理（含 redelivery）
+      const webhookEventId = event.webhookEventId;
+      const isRedelivery = !!event.deliveryContext?.isRedelivery;
+      const now = Date.now();
+      cleanupProcessedWebhookEvents(now);
+
+      if (webhookEventId && processedWebhookEvents.has(webhookEventId)) {
+        console.log('⚠️ [重複 Event] webhookEventId 已處理，跳過:', webhookEventId);
+        continue;
+      }
+
+      if (isRedelivery && webhookEventId) {
+        // 若是 redelivery 且前次已完成，這次直接跳過避免重複回覆
+        console.log('ℹ️ [Redelivery] 偵測到重送事件，跳過:', webhookEventId);
+        continue;
+      }
+
+      if (webhookEventId) {
+        processedWebhookEvents.set(webhookEventId, now);
+      }
 
       // 檢查 replyToken 是否已被使用（防止重複處理）
       const replyToken = event.replyToken;
@@ -2333,9 +2366,23 @@ export async function POST(req) {
             }
 
             if (emergencyEvent.status !== 'pending') {
+              const statusLabelMap = {
+                approved: '已發布',
+                rejected: '已駁回',
+                pending: '待審核'
+              };
+              const currentStatusLabel = statusLabelMap[emergencyEvent.status] || emergencyEvent.status;
+
+              let duplicateReviewMessage = `ℹ️ 此事件目前為「${currentStatusLabel}」，無法重複審核。`;
+              if (action === 'approve' && emergencyEvent.status === 'approved') {
+                duplicateReviewMessage = 'ℹ️ 此事件已發布，無需重複確認。';
+              } else if (action === 'reject' && emergencyEvent.status === 'rejected') {
+                duplicateReviewMessage = 'ℹ️ 此事件已駁回，無需重複操作。';
+              }
+
               await safeReplyMessage(replyToken, userId, {
                 type: 'text',
-                text: `ℹ️ 此事件目前狀態為「${emergencyEvent.status}」，無法重複審核。`
+                text: duplicateReviewMessage
               });
               continue;
             }
