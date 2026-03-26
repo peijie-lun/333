@@ -2163,7 +2163,9 @@ export async function POST(req) {
               continue;
             }
 
-            const adminTargets = (admins || []).map(a => a.line_user_id).filter(Boolean);
+            const adminTargets = Array.from(
+              new Set((admins || []).map((a) => a.line_user_id).filter(Boolean))
+            );
 
             if (adminTargets.length === 0) {
               console.warn('⚠️ 查無可通知的管理員 line_user_id，但通報已建立');
