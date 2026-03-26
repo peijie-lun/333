@@ -1723,7 +1723,7 @@ export async function POST(req) {
 
             if (saveImageErr) {
               console.error('❌ 緊急事件圖片保存失敗:', saveImageErr);
-              await client.replyMessage(replyToken, {
+              await safeReplyMessage(replyToken, userId, {
                 type: 'text',
                 text: '❌ 圖片上傳失敗，請稍後再試。'
               });
@@ -1746,7 +1746,7 @@ export async function POST(req) {
                 activeEmergencySession.description,
                 uploadedImageUrl
               );
-              await client.replyMessage(replyToken, [
+              await safeReplyMessage(replyToken, userId, [
                 { type: 'text', text: nextStepText },
                 confirmFlex
               ]);
@@ -1754,7 +1754,7 @@ export async function POST(req) {
               continue;
             }
 
-            await client.replyMessage(replyToken, {
+            await safeReplyMessage(replyToken, userId, {
               type: 'text',
               text: nextStepText
             });
@@ -1772,7 +1772,7 @@ export async function POST(req) {
             } else if (emergencyImageErr?.code === 'STORAGE_UPLOAD_FAILED') {
               emergencyImageErrorText = '❌ 圖片儲存失敗，請稍後再試；若持續發生請通知管理單位檢查上傳權限設定。';
             }
-            await client.replyMessage(replyToken, {
+            await safeReplyMessage(replyToken, userId, {
               type: 'text',
               text: emergencyImageErrorText
             });
