@@ -964,7 +964,7 @@ export async function POST(req) {
 
             if (sessionErr) {
               console.error('❌ 建立會話失敗:', sessionErr);
-              await client.replyMessage(replyToken, {
+              await safeReplyMessage(replyToken, userId, {
                 type: 'text',
                 text: '❌ 發生錯誤，請稍後再試。'
               });
@@ -1075,11 +1075,11 @@ export async function POST(req) {
               }
             };
 
-            await client.replyMessage(replyToken, eventTypesFlex);
+            await safeReplyMessage(replyToken, userId, eventTypesFlex);
             usedReplyTokens.add(replyToken);
           } catch (err) {
             console.error('❌ 緊急事件初始化失敗:', err);
-            await client.replyMessage(replyToken, {
+            await safeReplyMessage(replyToken, userId, {
               type: 'text',
               text: '❌ 發生錯誤，請稍後再試。'
             });
