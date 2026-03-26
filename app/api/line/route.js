@@ -115,6 +115,24 @@ async function uploadEmergencyImageFromLineMessage(messageId, userId) {
   return imageUrl;
 }
 
+async function safeReplyMessage(replyToken, userId, message) {
+  try {
+    await client.replyMessage(replyToken, message);
+  } catch (err) {
+    const statusCode = err?.statusCode || err?.originalError?.status;
+    if (statusCode === 400) {
+      console.warn('⚠️ replyToken 已失效或已使用，改用 push 回覆');
+      try {
+        await client.pushMessage(userId, message);
+      } catch (pushErr) {
+        console.error('❌ pushMessage 回覆也失敗:', pushErr);
+      }
+      return;
+    }
+    throw err;
+  }
+}
+
 function buildEmergencyConfirmFlex(sessionId, eventType, location, description, imageUrl) {
   const bubble = {
     type: 'bubble',
@@ -2262,7 +2280,7 @@ export async function POST(req) {
 
             if (adminProfileErr) {
               console.error('[Emergency Review] 查詢 committee 身分失敗:', adminProfileErr);
-              await client.replyMessage(replyToken, {
+              await safeReplyMessage(replyToken, userId, {
                 type: 'text',
                 text: '❌ 審核失敗，請稍後再試。'
               });
@@ -2270,7 +2288,7 @@ export async function POST(req) {
             }
 
             if (!adminProfile || adminProfile.role !== 'committee') {
-              await client.replyMessage(replyToken, {
+              await safeReplyMessage(replyToken, userId, {
                 type: 'text',
                 text: '⛔ 您沒有審核權限。'
               });
@@ -2286,7 +2304,7 @@ export async function POST(req) {
 
             if (eventQueryErr || !emergencyEvent) {
               console.error('[Emergency Review] 查詢事件失敗:', eventQueryErr);
-              await client.replyMessage(replyToken, {
+              await safeReplyMessage(replyToken, userId, {
                 type: 'text',
                 text: '⚠️ 找不到此緊急事件，可能已被處理。'
               });
@@ -2294,7 +2312,7 @@ export async function POST(req) {
             }
 
             if (emergencyEvent.status !== 'pending') {
-              await client.replyMessage(replyToken, {
+              await safeReplyMessage(replyToken, userId, {
                 type: 'text',
                 text: `ℹ️ 此事件目前狀態為「${emergencyEvent.status}」，無法重複審核。`
               });
@@ -2314,7 +2332,7 @@ export async function POST(req) {
 
             if (updateErr) {
               console.error('[Emergency Review] 更新狀態失敗:', updateErr);
-              await client.replyMessage(replyToken, {
+              await safeReplyMessage(replyToken, userId, {
                 type: 'text',
                 text: '❌ 審核更新失敗，請稍後再試。'
               });
@@ -2342,7 +2360,7 @@ export async function POST(req) {
               } else {
                 await client.broadcast({ type: 'text', text: broadcastText });
               }
-              await client.replyMessage(replyToken, {
+              await safeReplyMessage(replyToken, userId, {
                 type: 'text',
                 text: '✅ 已確認發布，緊急事件通知已廣播給所有住戶。'
               });
@@ -2350,14 +2368,14 @@ export async function POST(req) {
             }
 
             // 駁回
-            await client.replyMessage(replyToken, {
+            await safeReplyMessage(replyToken, userId, {
               type: 'text',
               text: '❌ 已駁回此緊急事件，不會進行廣播。'
             });
             continue;
           } catch (reviewErr) {
             console.error('[Emergency Review] 處理失敗:', reviewErr);
-            await client.replyMessage(replyToken, {
+            await safeReplyMessage(replyToken, userId, {
               type: 'text',
               text: '❌ 審核處理失敗，請稍後再試。'
             });
