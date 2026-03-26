@@ -3,9 +3,16 @@ import { createClient } from '@supabase/supabase-js';
 import { fileTypeFromBuffer } from 'file-type';
 import heicConvert from 'heic-convert';
 
+const supabaseServerKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  supabaseServerKey,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false
+    }
+  }
 );
 import { chat } from '../../../grokmain.js';
 import 'dotenv/config';
@@ -19,6 +26,10 @@ const lineConfig = {
 
 const client = new Client(lineConfig);// LINE Bot SDK 客戶端
 const emergencyImageBucket = process.env.SUPABASE_EMERGENCY_IMAGE_BUCKET || 'emergency_images';
+
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.warn('⚠️ 未設定 SUPABASE_SERVICE_ROLE_KEY，Storage 上傳可能因權限被拒。');
+}
 
 async function streamToBuffer(stream) {
   const chunks = [];
@@ -95,7 +106,13 @@ async function uploadEmergencyImageFromLineMessage(messageId, userId) {
     });
 
   if (uploadError) {
-    throw uploadError;
+    console.error('❌ Storage 上傳失敗:', {
+      bucket: emergencyImageBucket,
+      filePath,
+      message: uploadError.message,
+      statusCode: uploadError.statusCode
+    });
+    throw makeImageProcessingError('STORAGE_UPLOAD_FAILED', 'Storage 圖片上傳失敗');
   }
 
   const { data: publicUrlData } = supabase.storage.from(emergencyImageBucket).getPublicUrl(filePath);
@@ -121,7 +138,7 @@ async function safeReplyMessage(replyToken, userId, message) {
   } catch (err) {
     const statusCode = err?.statusCode || err?.originalError?.status;
     if (statusCode === 400) {
-      console.warn('⚠️ replyToken 已失效或已使用，改用 push 回覆');
+      console.log('[INFO] replyToken 已失效或已使用，改用 push 回覆');
       try {
         await client.pushMessage(userId, message);
       } catch (pushErr) {
@@ -1682,6 +1699,88 @@ export async function POST(req) {
         console.log('[報修-圖片] repairSessions 總數:', repairSessions.size);
         console.log('[報修-圖片] 所有 sessions:', Array.from(repairSessions.entries()));
 
+        // 緊急事件流程的圖片上傳（優先處理，避免誤判成報修）
+        try {
+          const { data: activeEmergencySession } = await supabase
+            .from('emergency_sessions')
+            .select('id, status, event_type, location, description')
+            .eq('line_user_id', userId)
+            .neq('status', 'submitted')
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (activeEmergencySession) {
+            const uploadedImageUrl = await uploadEmergencyImageFromLineMessage(messageId, userId);
+
+            const { error: saveImageErr } = await supabase
+              .from('emergency_sessions')
+              .update({
+                image_url: uploadedImageUrl,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', activeEmergencySession.id);
+
+            if (saveImageErr) {
+              console.error('❌ 緊急事件圖片保存失敗:', saveImageErr);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 圖片上傳失敗，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            let nextStepText = '✅ 圖片已附加到本次緊急事件。';
+            if (activeEmergencySession.status === 'event_type') {
+              nextStepText += '\n請先選擇或輸入事件類型。';
+            } else if (activeEmergencySession.status === 'location') {
+              nextStepText += '\n請繼續輸入事件地點。';
+            } else if (activeEmergencySession.status === 'description') {
+              nextStepText += '\n請繼續輸入事件描述。';
+            } else if (activeEmergencySession.status === 'confirm') {
+              const confirmFlex = buildEmergencyConfirmFlex(
+                activeEmergencySession.id,
+                activeEmergencySession.event_type,
+                activeEmergencySession.location,
+                activeEmergencySession.description,
+                uploadedImageUrl
+              );
+              await client.replyMessage(replyToken, [
+                { type: 'text', text: nextStepText },
+                confirmFlex
+              ]);
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: nextStepText
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+        } catch (emergencyImageErr) {
+          console.error('❌ 緊急事件圖片處理失敗:', emergencyImageErr);
+          if (!usedReplyTokens.has(replyToken)) {
+            let emergencyImageErrorText = '❌ 圖片處理失敗，請稍後再試。';
+            if (emergencyImageErr?.code === 'HEIF_CONVERT_FAILED') {
+              emergencyImageErrorText = '❌ HEIF 圖片轉檔失敗，請重新上傳 JPG/PNG 圖片。';
+            } else if (emergencyImageErr?.code === 'UNSUPPORTED_IMAGE_FORMAT') {
+              emergencyImageErrorText = '⚠️ 目前僅支援 JPG/PNG 圖片，請重新上傳。';
+            } else if (emergencyImageErr?.code === 'STORAGE_UPLOAD_FAILED') {
+              emergencyImageErrorText = '❌ 圖片儲存失敗，請稍後再試；若持續發生請通知管理單位檢查上傳權限設定。';
+            }
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: emergencyImageErrorText
+            });
+            usedReplyTokens.add(replyToken);
+          }
+          continue;
+        }
+
         // 檢查是否在報修流程中（已填寫地點和描述）
         const currentSession = repairSessions.get(userId);
 
@@ -1829,86 +1928,6 @@ export async function POST(req) {
           }
         } catch (err) {
           console.error('[報修-圖片] 處理最近報修單失敗:', err);
-        }
-
-        // 緊急事件流程的圖片上傳
-        try {
-          const { data: activeEmergencySession } = await supabase
-            .from('emergency_sessions')
-            .select('id, status, event_type, location, description')
-            .eq('line_user_id', userId)
-            .neq('status', 'submitted')
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (activeEmergencySession) {
-            const uploadedImageUrl = await uploadEmergencyImageFromLineMessage(messageId, userId);
-
-            const { error: saveImageErr } = await supabase
-              .from('emergency_sessions')
-              .update({
-                image_url: uploadedImageUrl,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', activeEmergencySession.id);
-
-            if (saveImageErr) {
-              console.error('❌ 緊急事件圖片保存失敗:', saveImageErr);
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '❌ 圖片上傳失敗，請稍後再試。'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            let nextStepText = '✅ 圖片已附加到本次緊急事件。';
-            if (activeEmergencySession.status === 'event_type') {
-              nextStepText += '\n請先選擇或輸入事件類型。';
-            } else if (activeEmergencySession.status === 'location') {
-              nextStepText += '\n請繼續輸入事件地點。';
-            } else if (activeEmergencySession.status === 'description') {
-              nextStepText += '\n請繼續輸入事件描述。';
-            } else if (activeEmergencySession.status === 'confirm') {
-              const confirmFlex = buildEmergencyConfirmFlex(
-                activeEmergencySession.id,
-                activeEmergencySession.event_type,
-                activeEmergencySession.location,
-                activeEmergencySession.description,
-                uploadedImageUrl
-              );
-              await client.replyMessage(replyToken, [
-                { type: 'text', text: nextStepText },
-                confirmFlex
-              ]);
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: nextStepText
-            });
-            usedReplyTokens.add(replyToken);
-            continue;
-          }
-        } catch (emergencyImageErr) {
-          console.error('❌ 緊急事件圖片處理失敗:', emergencyImageErr);
-          if (!usedReplyTokens.has(replyToken)) {
-            let emergencyImageErrorText = '❌ 圖片處理失敗，請稍後再試。';
-            if (emergencyImageErr?.code === 'HEIF_CONVERT_FAILED') {
-              emergencyImageErrorText = '❌ HEIF 圖片轉檔失敗，請重新上傳 JPG/PNG 圖片。';
-            } else if (emergencyImageErr?.code === 'UNSUPPORTED_IMAGE_FORMAT') {
-              emergencyImageErrorText = '⚠️ 目前僅支援 JPG/PNG 圖片，請重新上傳。';
-            }
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: emergencyImageErrorText
-            });
-            usedReplyTokens.add(replyToken);
-          }
-          continue;
         }
 
         // 非報修流程的圖片訊息，回覆提示
