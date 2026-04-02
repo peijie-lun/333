@@ -424,7 +424,7 @@ export async function POST(req) {
       // --- 1. 檢查使用者是否已存在 profiles ---
       const { data: existingProfile, error: checkError } = await supabase
         .from('profiles')
-        .select('id, name, unit_id, line_user_id, line_display_name, line_avatar_url, line_status_message')
+        .select('id, name, unit_id, line_user_id, line_display_name, line_avatar_url, line_status_message, points_balance')
         .eq('line_user_id', userId)
         .maybeSingle();
 
@@ -593,7 +593,7 @@ export async function POST(req) {
 
           const { data: facilityInfo, error: facilityErr } = await supabase
             .from('facilities')
-            .select('id, name, max_concurrent_bookings')
+            .select('id, name, max_concurrent_bookings, base_price')
             .eq('id', facilitySession.facilityId)
             .maybeSingle();
 
@@ -602,6 +602,40 @@ export async function POST(req) {
             await safeReplyMessage(replyToken, userId, {
               type: 'text',
               text: '找不到設施資料，請重新開始預約。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const bookingPoints = Number(facilityInfo.base_price || 0);
+          const currentPoints = Number(existingProfile?.points_balance || 0);
+
+          if (currentPoints < bookingPoints) {
+            facilityBookingSessions.delete(userId);
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: `點數不足，${facilityInfo.name} 需要 ${bookingPoints} 點，您目前剩餘 ${currentPoints} 點。`
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const { data: deductedProfile, error: deductErr } = await supabase
+            .from('profiles')
+            .update({
+              points_balance: currentPoints - bookingPoints,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', existingProfile.id)
+            .gte('points_balance', bookingPoints)
+            .select('points_balance')
+            .maybeSingle();
+
+          if (deductErr || !deductedProfile) {
+            facilityBookingSessions.delete(userId);
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '扣點失敗，請稍後再試。'
             });
             usedReplyTokens.add(replyToken);
             continue;
@@ -659,12 +693,20 @@ export async function POST(req) {
               user_name: existingProfile.name || existingProfile.line_display_name || null,
               user_room: userRoom,
               notes: 'LINE Bot 預約',
-              points_spent: 0
+              points_spent: bookingPoints
             }])
             .select('id')
             .maybeSingle();
 
           if (bookingErr || !createdBooking) {
+            await supabase
+              .from('profiles')
+              .update({
+                points_balance: currentPoints,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', existingProfile.id);
+
             facilityBookingSessions.delete(userId);
             await safeReplyMessage(replyToken, userId, {
               type: 'text',
@@ -682,6 +724,8 @@ export async function POST(req) {
               `設施：${facilityInfo.name}\n` +
               `日期：${facilitySession.bookingDate}\n` +
               `時段：${timeRange.start}-${timeRange.end}\n` +
+              `扣點：${bookingPoints} 點\n` +
+              `剩餘點數：${deductedProfile.points_balance} 點\n` +
               `預約編號：${createdBooking.id.slice(0, 8)}`
           });
           usedReplyTokens.add(replyToken);
@@ -812,7 +856,7 @@ export async function POST(req) {
 
           const { data: cancellableBookings, error: cancelQueryErr } = await supabase
             .from('facility_bookings')
-            .select('id, booking_date, start_time, end_time, facilities(name)')
+            .select('id, booking_date, start_time, end_time, points_spent, facilities(name)')
             .eq('user_id', existingProfile.id)
             .eq('status', 'confirmed')
             .gte('booking_date', new Date().toISOString().slice(0, 10))
@@ -2615,14 +2659,10 @@ export async function POST(req) {
 
           const { data: cancelledBooking, error: cancelErr } = await supabase
             .from('facility_bookings')
-            .update({
-              status: 'cancelled',
-              updated_at: new Date().toISOString()
-            })
+            .select('id, points_spent')
             .eq('id', bookingId)
             .eq('user_id', existingProfile.id)
             .in('status', ['confirmed', 'waitlisted'])
-            .select('id')
             .maybeSingle();
 
           if (cancelErr || !cancelledBooking) {
@@ -2633,9 +2673,32 @@ export async function POST(req) {
             continue;
           }
 
+          const refundPoints = Number(cancelledBooking.points_spent || 0);
+          if (refundPoints > 0) {
+            await supabase
+              .from('profiles')
+              .update({
+                points_balance: Number(existingProfile.points_balance || 0) + refundPoints,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', existingProfile.id);
+          }
+
+          await supabase
+            .from('facility_bookings')
+            .update({
+              status: 'cancelled',
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', bookingId)
+            .eq('user_id', existingProfile.id)
+            .in('status', ['confirmed', 'waitlisted']);
+
           await safeReplyMessage(replyToken, userId, {
             type: 'text',
-            text: '已取消該筆設施預約。'
+            text: refundPoints > 0
+              ? `已取消該筆設施預約，並退回 ${refundPoints} 點。`
+              : '已取消該筆設施預約。'
           });
           continue;
         }
