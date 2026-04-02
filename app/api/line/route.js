@@ -26,6 +26,7 @@ const lineConfig = {
 
 const client = new Client(lineConfig);// LINE Bot SDK 客戶端
 const emergencyImageBucket = process.env.SUPABASE_EMERGENCY_IMAGE_BUCKET || 'emergency_images';
+const maintenanceImageBucket = process.env.SUPABASE_MAINTENANCE_IMAGE_BUCKET || 'maintenance_images';
 
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.warn('⚠️ 未設定 SUPABASE_SERVICE_ROLE_KEY，Storage 上傳可能因權限被拒。');
@@ -125,6 +126,46 @@ async function uploadEmergencyImageFromLineMessage(messageId, userId) {
 
     if (signedUrlError || !signedUrlData?.signedUrl) {
       throw signedUrlError || new Error('建立圖片連結失敗');
+    }
+    imageUrl = signedUrlData.signedUrl;
+  }
+
+  return imageUrl;
+}
+
+async function uploadMaintenanceImageFromLineMessage(messageId, userId) {
+  const messageStream = await client.getMessageContent(messageId);
+  const rawImageBuffer = await streamToBuffer(messageStream);
+  const normalizedImage = await normalizeEmergencyImageBuffer(rawImageBuffer);
+  const filePath = `line-maintenance/${new Date().toISOString().slice(0, 10)}/${userId}_${messageId}.${normalizedImage.ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(maintenanceImageBucket)
+    .upload(filePath, normalizedImage.buffer, {
+      contentType: normalizedImage.contentType,
+      upsert: false
+    });
+
+  if (uploadError) {
+    console.error('❌ Maintenance Storage 上傳失敗:', {
+      bucket: maintenanceImageBucket,
+      filePath,
+      message: uploadError.message,
+      statusCode: uploadError.statusCode
+    });
+    throw makeImageProcessingError('MAINTENANCE_STORAGE_UPLOAD_FAILED', '報修圖片上傳失敗');
+  }
+
+  const { data: publicUrlData } = supabase.storage.from(maintenanceImageBucket).getPublicUrl(filePath);
+  let imageUrl = publicUrlData?.publicUrl || null;
+
+  if (!imageUrl) {
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(maintenanceImageBucket)
+      .createSignedUrl(filePath, 60 * 60 * 24 * 7);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      throw signedUrlError || new Error('建立報修圖片連結失敗');
     }
     imageUrl = signedUrlData.signedUrl;
   }
@@ -1050,11 +1091,20 @@ export async function POST(req) {
         // 查詢我的報修記錄（必須完全匹配，避免與「我要報修」衝突）
         if (userText === '我的報修' || userText === '報修記錄' || userText === '報修查詢') {
           try {
+            if (!existingProfile?.id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定，暫時無法查詢報修記錄。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
             const { data: repairs, error } = await supabase
-              .from('repairs')
-              .select('*')
-              .eq('user_id', userId)
-              .in('status', ['pending', 'processing', 'completed', 'cancelled'])  // 只顯示已提交的報修
+              .from('maintenance')
+              .select('id, status, created_at, equipment, item, description')
+              .eq('reported_by_id', existingProfile.id)
+              .in('status', ['open', 'progress', 'closed'])
               .order('created_at', { ascending: false })
               .limit(5);
 
@@ -1067,10 +1117,9 @@ export async function POST(req) {
             }
 
             const statusEmoji = {
-              'pending': '🟡 待處理',
-              'processing': '🔵 處理中',
-              'completed': '✅ 已完成',
-              'cancelled': '❌ 已取消'
+              open: '🟡 待處理',
+              progress: '🔵 處理中',
+              closed: '✅ 已完成'
             };
 
             let recordsText = '📋 您的報修記錄（最近5筆）\n\n';
@@ -1081,9 +1130,10 @@ export async function POST(req) {
                 hour: '2-digit',
                 minute: '2-digit'
               });
-              recordsText += `${index + 1}. 編號 ${repair.repair_code || '#' + repair.id}\n`;
+              recordsText += `${index + 1}. 編號 #${String(repair.id).slice(0, 8)}\n`;
               recordsText += `   ${statusEmoji[repair.status] || repair.status}\n`;
-              recordsText += `   ${repair.building ? repair.building + ' - ' : ''}${repair.location}\n`;
+              recordsText += `   ${repair.equipment || '未提供地點'}\n`;
+              recordsText += `   ${(repair.item || '一般報修')} - ${(repair.description || '未提供描述')}\n`;
               recordsText += `   ${date}\n\n`;
             });
 
@@ -1178,37 +1228,33 @@ export async function POST(req) {
           // 步驟3: 略過照片，直接完成報修
           if (currentSession.location && currentSession.description && (userText === '略過' || userText === '跳過')) {
             console.log('[報修] 步驟3: 略過照片，提交報修');
-            
-            // 生成報修編號
-            const today = new Date();
-            const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
-            const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-            const repairCode = `R${dateStr}-${randomNum}`;
-            
+
             console.log('[報修] 提交前資料確認:', {
               location: currentSession.location,
-              description: currentSession.description,
-              repair_code: repairCode
+              description: currentSession.description
             });
             
-            // 直接寫入資料庫為 pending 狀態（不使用草稿）
+            // 直接寫入 maintenance（不使用草稿）
             const { data: completedRepair, error: insertError } = await supabase
-              .from('repairs')
+              .from('maintenance')
               .insert([{
-                user_id: userId,
-                repair_code: repairCode,
-                status: 'pending',
-                category: '一般報修',
-                building: '未指定',
-                location: currentSession.location,
+                equipment: currentSession.location,
+                item: '一般報修',
+                status: 'open',
+                time: new Date().toISOString(),
                 description: currentSession.description,
-                priority: 'medium',
+                image_url: null,
+                reported_by_id: existingProfile?.id || null,
+                created_by: existingProfile?.id || null,
+                unit_id: existingProfile?.unit_id || null,
+                reported_by_name: existingProfile?.name || existingProfile?.line_display_name || null,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
               }])
-              .select();
+              .select('id, equipment, description')
+              .maybeSingle();
 
-            if (insertError || !completedRepair || completedRepair.length === 0) {
+            if (insertError || !completedRepair) {
               console.error('[報修] 提交失敗:', insertError);
               await client.replyMessage(replyToken, {
                 type: 'text',
@@ -1221,10 +1267,10 @@ export async function POST(req) {
             // 清除 session
             repairSessions.delete(userId);
             
-            const repair = completedRepair[0];
+            const repair = completedRepair;
             await client.replyMessage(replyToken, {
               type: 'text',
-              text: `✅ 報修已送出\n📌 編號：${repair.repair_code}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.location}\n📝 問題：${repair.description}\n\n管理單位會盡快處理，謝謝您的通報！`
+              text: `✅ 報修已送出\n📌 編號：#${String(repair.id).slice(0, 8)}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.equipment}\n📝 問題：${repair.description}\n\n管理單位會盡快處理，謝謝您的通報！`
             });
             usedReplyTokens.add(replyToken);
             continue;
@@ -2303,30 +2349,29 @@ export async function POST(req) {
         if (currentSession && hasLocation && hasDescription) {
           console.log('[報修-圖片] ✅ Session 完整，開始提交報修');
           try {
-            // 生成報修編號
-            const today = new Date();
-            const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
-            const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-            const repairCode = `R${dateStr}-${randomNum}`;
+            const maintenanceImageUrl = await uploadMaintenanceImageFromLineMessage(messageId, userId);
 
-            // 直接寫入資料庫為 pending 狀態
+            // 直接寫入 maintenance（含圖片）
             const { data: completedRepair, error: insertError } = await supabase
-              .from('repairs')
+              .from('maintenance')
               .insert([{
-                user_id: userId,
-                repair_code: repairCode,
-                status: 'pending',
-                category: '一般報修',
-                building: '未指定',
-                location: currentSession.location,
+                equipment: currentSession.location,
+                item: '一般報修',
+                status: 'open',
+                time: new Date().toISOString(),
                 description: currentSession.description,
-                priority: 'medium',
+                image_url: maintenanceImageUrl,
+                reported_by_id: existingProfile?.id || null,
+                created_by: existingProfile?.id || null,
+                unit_id: existingProfile?.unit_id || null,
+                reported_by_name: existingProfile?.name || existingProfile?.line_display_name || null,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
               }])
-              .select();
+              .select('id, equipment, description')
+              .maybeSingle();
 
-            if (insertError || !completedRepair || completedRepair.length === 0) {
+            if (insertError || !completedRepair) {
               console.error('[報修-圖片] 提交報修單失敗:', insertError);
               await client.replyMessage(replyToken, {
                 type: 'text',
@@ -2335,24 +2380,9 @@ export async function POST(req) {
               continue;
             }
 
-            // 建立圖片記錄
-            const repair = completedRepair[0];
-            const imageUrl = `LINE_MESSAGE:${messageId}`; // 儲存 LINE 訊息 ID
+            const repair = completedRepair;
 
-            const { error: imageError } = await supabase
-              .from('repair_images')
-              .insert([{
-                repair_id: repair.id,
-                image_url: imageUrl,
-                created_at: new Date().toISOString()
-              }]);
-
-            if (imageError) {
-              console.error('[報修-圖片] 圖片儲存失敗:', imageError);
-              // 圖片儲存失敗不影響報修提交，繼續回覆成功訊息
-            }
-
-            console.log('[報修-圖片] ✅ 報修提交成功:', repair.repair_code);
+            console.log('[報修-圖片] ✅ 報修提交成功:', repair.id);
 
             // 清除 session
             repairSessions.delete(userId);
@@ -2360,7 +2390,7 @@ export async function POST(req) {
             // 回覆成功訊息
             await client.replyMessage(replyToken, {
               type: 'text',
-              text: `✅ 報修已送出\n📌 編號：${repair.repair_code}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.location}\n📝 問題：${repair.description}\n📸 已附上照片\n\n管理單位會盡快處理，謝謝您的通報！`
+              text: `✅ 報修已送出\n📌 編號：#${String(repair.id).slice(0, 8)}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.equipment}\n📝 問題：${repair.description}\n📸 已附上照片\n\n管理單位會盡快處理，謝謝您的通報！`
             });
             usedReplyTokens.add(replyToken); // 標記為已使用
             console.log('[報修-圖片] ✅ 訊息回覆成功');
@@ -2384,15 +2414,16 @@ export async function POST(req) {
           continue;
         }
 
-        // 沒有 session，檢查是否有最近提交的報修單（5分鐘內）
+        // 沒有 session，檢查是否有最近提交的報修單（5分鐘內），用於補圖
         console.log('[報修-圖片] 沒有 session，檢查最近的報修單');
         try {
           const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
           const { data: recentRepairs, error: queryError } = await supabase
-            .from('repairs')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('status', 'pending')
+            .from('maintenance')
+            .select('id, equipment, description, status, image_url')
+            .eq('reported_by_id', existingProfile?.id || '')
+            .eq('status', 'open')
+            .is('image_url', null)
             .gte('created_at', fiveMinutesAgo)
             .order('created_at', { ascending: false })
             .limit(1);
@@ -2404,17 +2435,18 @@ export async function POST(req) {
 
           if (recentRepairs && recentRepairs.length > 0) {
             const repair = recentRepairs[0];
-            console.log('[報修-圖片] 找到最近的報修單:', repair.repair_code);
+            console.log('[報修-圖片] 找到最近的報修單:', repair.id);
 
-            // 將圖片附加到這個報修單
-            const imageUrl = `LINE_MESSAGE:${messageId}`;
+            // 將圖片附加到這個 maintenance 單
+            const imageUrl = await uploadMaintenanceImageFromLineMessage(messageId, userId);
             const { error: imageError } = await supabase
-              .from('repair_images')
-              .insert([{
-                repair_id: repair.id,
+              .from('maintenance')
+              .update({
                 image_url: imageUrl,
-                created_at: new Date().toISOString()
-              }]);
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', repair.id)
+              .eq('reported_by_id', existingProfile?.id || '');
 
             if (imageError) {
               console.error('[報修-圖片] 圖片儲存失敗:', imageError);
@@ -2428,7 +2460,7 @@ export async function POST(req) {
             console.log('[報修-圖片] ✅ 圖片已附加到報修單');
             await client.replyMessage(replyToken, {
               type: 'text',
-              text: `✅ 報修已送出\n📌 編號：${repair.repair_code}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.location}\n📝 問題：${repair.description}\n📸 已附上照片\n\n管理單位會盡快處理，謝謝您的通報！`
+              text: `✅ 圖片已補上\n📌 編號：#${String(repair.id).slice(0, 8)}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.equipment}\n📝 問題：${repair.description}\n📸 已附上照片\n\n管理單位會盡快處理，謝謝您的通報！`
             });
             continue;
           }
