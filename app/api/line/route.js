@@ -250,9 +250,84 @@ function buildEmergencyConfirmFlex(sessionId, eventType, location, description, 
   };
 }
 
+function buildFacilityMainMenuFlex() {
+  return {
+    type: 'flex',
+    altText: '預約公共設施',
+    contents: {
+      type: 'bubble',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'md',
+        contents: [
+          { type: 'text', text: '🏢 公共設施預約', weight: 'bold', size: 'lg' },
+          { type: 'text', text: '請選擇操作項目', size: 'sm', color: '#666666' }
+        ]
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'sm',
+        contents: [
+          {
+            type: 'button',
+            style: 'primary',
+            action: {
+              type: 'postback',
+              label: '我要預約',
+              data: 'action=facility_start_booking',
+              displayText: '我要預約'
+            }
+          },
+          {
+            type: 'button',
+            style: 'secondary',
+            action: {
+              type: 'postback',
+              label: '我的預約',
+              data: 'action=facility_my_bookings',
+              displayText: '我的預約'
+            }
+          },
+          {
+            type: 'button',
+            style: 'secondary',
+            action: {
+              type: 'postback',
+              label: '取消預約',
+              data: 'action=facility_cancel_menu',
+              displayText: '取消預約'
+            }
+          }
+        ]
+      }
+    }
+  };
+}
+
+function parseDateInput(dateText) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return null;
+  const dt = new Date(`${dateText}T00:00:00`);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt;
+}
+
+function parseTimeRangeInput(text) {
+  const match = text.match(/^([01]\d|2[0-3]):([0-5]\d)\s*-\s*([01]\d|2[0-3]):([0-5]\d)$/);
+  if (!match) return null;
+  const start = `${match[1]}:${match[2]}`;
+  const end = `${match[3]}:${match[4]}`;
+  if (start >= end) return null;
+  return { start, end };
+}
+
 // 記憶體暫存報修會話資料（取代資料庫草稿）
 const repairSessions = new Map();
 // 結構：{ userId: { location: string, description: string, startTime: timestamp } }
+
+// 記憶體暫存設施預約流程狀態
+const facilityBookingSessions = new Map();
 
 // 追蹤已使用的 replyToken（防止重複處理）
 const usedReplyTokens = new Set();
@@ -432,6 +507,360 @@ export async function POST(req) {
         
         if (shouldIgnore) {
           console.log('⏭️ 忽略系統提示訊息，不回覆');
+          continue;
+        }
+
+        // ===== 設施預約流程（MVP） =====
+        const facilitySession = facilityBookingSessions.get(userId);
+
+        if (facilitySession?.step === 'await_date') {
+          if (userText === '取消' || userText === '取消預約流程') {
+            facilityBookingSessions.delete(userId);
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '已取消本次設施預約流程。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const bookingDate = userText.trim();
+          const parsedDate = parseDateInput(bookingDate);
+          if (!parsedDate) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '日期格式錯誤，請使用 YYYY-MM-DD，例如 2026-04-05。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          if (parsedDate < today) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '不可預約過去日期，請重新輸入。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          facilityBookingSessions.set(userId, {
+            ...facilitySession,
+            bookingDate,
+            step: 'await_time'
+          });
+
+          await safeReplyMessage(replyToken, userId, {
+            type: 'text',
+            text: `已選擇日期：${bookingDate}\n請輸入時段（HH:mm-HH:mm），例如 18:00-19:00。\n輸入「取消」可中止流程。`
+          });
+          usedReplyTokens.add(replyToken);
+          continue;
+        }
+
+        if (facilitySession?.step === 'await_time') {
+          if (userText === '取消' || userText === '取消預約流程') {
+            facilityBookingSessions.delete(userId);
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '已取消本次設施預約流程。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const timeRange = parseTimeRangeInput(userText.trim());
+          if (!timeRange) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '時段格式錯誤，請使用 HH:mm-HH:mm，例如 18:00-19:00。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          if (!existingProfile?.id) {
+            facilityBookingSessions.delete(userId);
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '尚未完成住戶綁定，暫時無法預約設施。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const { data: facilityInfo, error: facilityErr } = await supabase
+            .from('facilities')
+            .select('id, name, max_concurrent_bookings')
+            .eq('id', facilitySession.facilityId)
+            .maybeSingle();
+
+          if (facilityErr || !facilityInfo) {
+            facilityBookingSessions.delete(userId);
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '找不到設施資料，請重新開始預約。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const { count: conflictCount, error: conflictErr } = await supabase
+            .from('facility_bookings')
+            .select('id', { count: 'exact', head: true })
+            .eq('facility_id', facilitySession.facilityId)
+            .eq('booking_date', facilitySession.bookingDate)
+            .in('status', ['confirmed'])
+            .lt('start_time', `${timeRange.end}:00`)
+            .gt('end_time', `${timeRange.start}:00`);
+
+          if (conflictErr) {
+            facilityBookingSessions.delete(userId);
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '檢查時段可用性失敗，請稍後再試。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const maxConcurrent = facilityInfo.max_concurrent_bookings || 1;
+          if ((conflictCount || 0) >= maxConcurrent) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: `此時段已額滿（最多 ${maxConcurrent} 組），請改選其他時段。`
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          let userRoom = null;
+          if (existingProfile?.unit_id) {
+            const { data: unitData } = await supabase
+              .from('units')
+              .select('unit_number, unit_code')
+              .eq('id', existingProfile.unit_id)
+              .maybeSingle();
+            userRoom = unitData?.unit_number || unitData?.unit_code || null;
+          }
+
+          const { data: createdBooking, error: bookingErr } = await supabase
+            .from('facility_bookings')
+            .insert([{
+              facility_id: facilitySession.facilityId,
+              user_id: existingProfile.id,
+              booking_date: facilitySession.bookingDate,
+              start_time: `${timeRange.start}:00`,
+              end_time: `${timeRange.end}:00`,
+              status: 'confirmed',
+              unit_id: existingProfile.unit_id || null,
+              user_name: existingProfile.name || existingProfile.line_display_name || null,
+              user_room: userRoom,
+              notes: 'LINE Bot 預約',
+              points_spent: 0
+            }])
+            .select('id')
+            .maybeSingle();
+
+          if (bookingErr || !createdBooking) {
+            facilityBookingSessions.delete(userId);
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '預約失敗，請稍後再試。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          facilityBookingSessions.delete(userId);
+          await safeReplyMessage(replyToken, userId, {
+            type: 'text',
+            text:
+              `預約成功\n` +
+              `設施：${facilityInfo.name}\n` +
+              `日期：${facilitySession.bookingDate}\n` +
+              `時段：${timeRange.start}-${timeRange.end}\n` +
+              `預約編號：${createdBooking.id.slice(0, 8)}`
+          });
+          usedReplyTokens.add(replyToken);
+          continue;
+        }
+
+        const isFacilityMenuText = cleanText === '預約公共設施' || cleanText === '設施預約' || cleanText === '公共設施預約';
+        const isStartBookingText = userText === '我要預約';
+        const isMyBookingsText = userText === '我的預約';
+        const isCancelBookingText = userText === '取消預約';
+
+        if (isFacilityMenuText) {
+          await safeReplyMessage(replyToken, userId, buildFacilityMainMenuFlex());
+          usedReplyTokens.add(replyToken);
+          continue;
+        }
+
+        if (isStartBookingText) {
+          const { data: facilities, error: facilityQueryErr } = await supabase
+            .from('facilities')
+            .select('id, name, location, capacity, base_price, available')
+            .eq('available', true)
+            .order('name', { ascending: true })
+            .limit(10);
+
+          if (facilityQueryErr || !facilities || facilities.length === 0) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '目前沒有可預約的設施，請稍後再試。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const bubbles = facilities.map((f) => ({
+            type: 'bubble',
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              spacing: 'sm',
+              contents: [
+                { type: 'text', text: f.name, weight: 'bold', size: 'lg', wrap: true },
+                { type: 'text', text: `地點：${f.location || '未提供'}`, size: 'sm', color: '#666666', wrap: true },
+                { type: 'text', text: `容量：${f.capacity || 1} 人`, size: 'sm', color: '#666666', wrap: true },
+                { type: 'text', text: `費用：${f.base_price || 0} 點`, size: 'sm', color: '#666666', wrap: true }
+              ]
+            },
+            footer: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'button',
+                  style: 'primary',
+                  action: {
+                    type: 'postback',
+                    label: '選擇此設施',
+                    data: `action=facility_select&facility_id=${f.id}`,
+                    displayText: `選擇設施：${f.name}`
+                  }
+                }
+              ]
+            }
+          }));
+
+          await safeReplyMessage(replyToken, userId, {
+            type: 'flex',
+            altText: '請選擇要預約的設施',
+            contents: { type: 'carousel', contents: bubbles }
+          });
+          usedReplyTokens.add(replyToken);
+          continue;
+        }
+
+        if (isMyBookingsText) {
+          if (!existingProfile?.id) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '尚未完成住戶綁定，暫時無法查詢預約。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const { data: myBookings, error: myBookingErr } = await supabase
+            .from('facility_bookings')
+            .select('id, booking_date, start_time, end_time, status, facilities(name)')
+            .eq('user_id', existingProfile.id)
+            .in('status', ['confirmed', 'waitlisted'])
+            .gte('booking_date', new Date().toISOString().slice(0, 10))
+            .order('booking_date', { ascending: true })
+            .order('start_time', { ascending: true })
+            .limit(10);
+
+          if (myBookingErr || !myBookings || myBookings.length === 0) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '目前沒有未來的預約紀錄。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const bookingText = myBookings.map((b, idx) => {
+            const facilityName = b.facilities?.name || '未命名設施';
+            const start = String(b.start_time).slice(0, 5);
+            const end = String(b.end_time).slice(0, 5);
+            return `${idx + 1}. ${facilityName}\n   ${b.booking_date} ${start}-${end} (${b.status})`;
+          }).join('\n\n');
+
+          await safeReplyMessage(replyToken, userId, {
+            type: 'text',
+            text: `我的預約\n\n${bookingText}`
+          });
+          usedReplyTokens.add(replyToken);
+          continue;
+        }
+
+        if (isCancelBookingText) {
+          if (!existingProfile?.id) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '尚未完成住戶綁定，暫時無法取消預約。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const { data: cancellableBookings, error: cancelQueryErr } = await supabase
+            .from('facility_bookings')
+            .select('id, booking_date, start_time, end_time, facilities(name)')
+            .eq('user_id', existingProfile.id)
+            .eq('status', 'confirmed')
+            .gte('booking_date', new Date().toISOString().slice(0, 10))
+            .order('booking_date', { ascending: true })
+            .order('start_time', { ascending: true })
+            .limit(8);
+
+          if (cancelQueryErr || !cancellableBookings || cancellableBookings.length === 0) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '目前沒有可取消的預約。'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+
+          const cancelButtons = cancellableBookings.map((b) => ({
+            type: 'button',
+            style: 'secondary',
+            action: {
+              type: 'postback',
+              label: `${b.facilities?.name || '設施'} ${b.booking_date} ${String(b.start_time).slice(0, 5)}`,
+              data: `action=facility_cancel_booking&booking_id=${b.id}`,
+              displayText: `取消預約 ${b.facilities?.name || ''}`.trim()
+            }
+          }));
+
+          await safeReplyMessage(replyToken, userId, {
+            type: 'flex',
+            altText: '請選擇要取消的預約',
+            contents: {
+              type: 'bubble',
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  { type: 'text', text: '請選擇要取消的預約', weight: 'bold', size: 'md', wrap: true }
+                ]
+              },
+              footer: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'sm',
+                contents: cancelButtons
+              }
+            }
+          });
+          usedReplyTokens.add(replyToken);
           continue;
         }
 
@@ -1985,6 +2414,231 @@ export async function POST(req) {
         const emergencyEventId = params.get('event_id');
         
         console.log('[DEBUG Postback] action:', action);
+
+        // ===== 設施預約（MVP） =====
+        if (action === 'facility_start_booking') {
+          const { data: facilities, error: facilityQueryErr } = await supabase
+            .from('facilities')
+            .select('id, name, location, capacity, base_price, available')
+            .eq('available', true)
+            .order('name', { ascending: true })
+            .limit(10);
+
+          if (facilityQueryErr || !facilities || facilities.length === 0) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '目前沒有可預約的設施，請稍後再試。'
+            });
+            continue;
+          }
+
+          const bubbles = facilities.map((f) => ({
+            type: 'bubble',
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              spacing: 'sm',
+              contents: [
+                { type: 'text', text: f.name, weight: 'bold', size: 'lg', wrap: true },
+                { type: 'text', text: `地點：${f.location || '未提供'}`, size: 'sm', color: '#666666', wrap: true },
+                { type: 'text', text: `容量：${f.capacity || 1} 人`, size: 'sm', color: '#666666', wrap: true },
+                { type: 'text', text: `費用：${f.base_price || 0} 點`, size: 'sm', color: '#666666', wrap: true }
+              ]
+            },
+            footer: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'button',
+                  style: 'primary',
+                  action: {
+                    type: 'postback',
+                    label: '選擇此設施',
+                    data: `action=facility_select&facility_id=${f.id}`,
+                    displayText: `選擇設施：${f.name}`
+                  }
+                }
+              ]
+            }
+          }));
+
+          await safeReplyMessage(replyToken, userId, {
+            type: 'flex',
+            altText: '請選擇要預約的設施',
+            contents: { type: 'carousel', contents: bubbles }
+          });
+          continue;
+        }
+
+        if (action === 'facility_my_bookings') {
+          if (!existingProfile?.id) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '尚未完成住戶綁定，暫時無法查詢預約。'
+            });
+            continue;
+          }
+
+          const { data: myBookings, error: myBookingErr } = await supabase
+            .from('facility_bookings')
+            .select('id, booking_date, start_time, end_time, status, facilities(name)')
+            .eq('user_id', existingProfile.id)
+            .in('status', ['confirmed', 'waitlisted'])
+            .gte('booking_date', new Date().toISOString().slice(0, 10))
+            .order('booking_date', { ascending: true })
+            .order('start_time', { ascending: true })
+            .limit(10);
+
+          if (myBookingErr || !myBookings || myBookings.length === 0) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '目前沒有未來的預約紀錄。'
+            });
+            continue;
+          }
+
+          const bookingText = myBookings.map((b, idx) => {
+            const facilityName = b.facilities?.name || '未命名設施';
+            const start = String(b.start_time).slice(0, 5);
+            const end = String(b.end_time).slice(0, 5);
+            return `${idx + 1}. ${facilityName}\n   ${b.booking_date} ${start}-${end} (${b.status})`;
+          }).join('\n\n');
+
+          await safeReplyMessage(replyToken, userId, {
+            type: 'text',
+            text: `我的預約\n\n${bookingText}`
+          });
+          continue;
+        }
+
+        if (action === 'facility_cancel_menu') {
+          if (!existingProfile?.id) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '尚未完成住戶綁定，暫時無法取消預約。'
+            });
+            continue;
+          }
+
+          const { data: cancellableBookings, error: cancelQueryErr } = await supabase
+            .from('facility_bookings')
+            .select('id, booking_date, start_time, end_time, facilities(name)')
+            .eq('user_id', existingProfile.id)
+            .eq('status', 'confirmed')
+            .gte('booking_date', new Date().toISOString().slice(0, 10))
+            .order('booking_date', { ascending: true })
+            .order('start_time', { ascending: true })
+            .limit(8);
+
+          if (cancelQueryErr || !cancellableBookings || cancellableBookings.length === 0) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '目前沒有可取消的預約。'
+            });
+            continue;
+          }
+
+          const cancelButtons = cancellableBookings.map((b) => ({
+            type: 'button',
+            style: 'secondary',
+            action: {
+              type: 'postback',
+              label: `${b.facilities?.name || '設施'} ${b.booking_date} ${String(b.start_time).slice(0, 5)}`,
+              data: `action=facility_cancel_booking&booking_id=${b.id}`,
+              displayText: `取消預約 ${b.facilities?.name || ''}`.trim()
+            }
+          }));
+
+          await safeReplyMessage(replyToken, userId, {
+            type: 'flex',
+            altText: '請選擇要取消的預約',
+            contents: {
+              type: 'bubble',
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  { type: 'text', text: '請選擇要取消的預約', weight: 'bold', size: 'md', wrap: true }
+                ]
+              },
+              footer: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'sm',
+                contents: cancelButtons
+              }
+            }
+          });
+          continue;
+        }
+
+        if (action === 'facility_select') {
+          const facilityId = params.get('facility_id');
+          const { data: facilityInfo, error: facilityErr } = await supabase
+            .from('facilities')
+            .select('id, name')
+            .eq('id', facilityId)
+            .eq('available', true)
+            .maybeSingle();
+
+          if (facilityErr || !facilityInfo) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '此設施目前不可預約，請改選其他設施。'
+            });
+            continue;
+          }
+
+          facilityBookingSessions.set(userId, {
+            step: 'await_date',
+            facilityId: facilityInfo.id,
+            facilityName: facilityInfo.name
+          });
+
+          await safeReplyMessage(replyToken, userId, {
+            type: 'text',
+            text: `已選擇設施：${facilityInfo.name}\n請輸入預約日期（YYYY-MM-DD），例如 2026-04-05。\n輸入「取消」可中止流程。`
+          });
+          continue;
+        }
+
+        if (action === 'facility_cancel_booking') {
+          const bookingId = params.get('booking_id');
+          if (!existingProfile?.id) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '尚未完成住戶綁定，暫時無法取消預約。'
+            });
+            continue;
+          }
+
+          const { data: cancelledBooking, error: cancelErr } = await supabase
+            .from('facility_bookings')
+            .update({
+              status: 'cancelled',
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', bookingId)
+            .eq('user_id', existingProfile.id)
+            .in('status', ['confirmed', 'waitlisted'])
+            .select('id')
+            .maybeSingle();
+
+          if (cancelErr || !cancelledBooking) {
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '取消失敗，可能此預約已被取消或不存在。'
+            });
+            continue;
+          }
+
+          await safeReplyMessage(replyToken, userId, {
+            type: 'text',
+            text: '已取消該筆設施預約。'
+          });
+          continue;
+        }
 
         // ===== 處理緊急事件回報流程（方案C） =====
         if (action === 'select_event_type') {
