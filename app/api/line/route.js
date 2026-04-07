@@ -191,6 +191,85 @@ async function safeReplyMessage(replyToken, userId, message) {
   }
 }
 
+/**
+ * 🚨 推播緊急通知給住户的聯繫人
+ * 當 IoT 設備或其他系統觸發緊急事件時使用此函數
+ * 
+ * @param {string} operatorProfileId - 觸發緊急事件的住户 UUID
+ * @param {string} eventContext - 事件背景說明（例如 "IoT 緊急按鈕" ）
+ * @returns {Promise<{success: boolean, message: string, contactName?: string}>}
+ */
+async function notifyEmergencyContact(operatorProfileId, eventContext = 'IoT 緊急事件') {
+  try {
+    console.log(`🚨 [緊急通知] 準備推播給聯繫人，操作人員 ID: ${operatorProfileId}`);
+
+    // 查詢住户信息和緊急聯繫人
+    const { data: operatorProfile, error: profileError } = await supabase
+      .from('profiles')
+      .select('id, name, unit_id, emergency_contact_name, emergency_contact_phone, emergency_contact_line_user_id')
+      .eq('id', operatorProfileId)
+      .maybeSingle();
+
+    if (profileError || !operatorProfile) {
+      console.error('[緊急通知] ❌ 無法查詢住户信息:', profileError);
+      return { success: false, message: '無法查詢住户信息' };
+    }
+
+    // 檢查是否有緊急聯繫人的 LINE user ID
+    if (!operatorProfile.emergency_contact_line_user_id) {
+      console.warn('[緊急通知] ⚠️ 住户未設定緊急聯繫人的 LINE user ID');
+      return { 
+        success: false, 
+        message: '住户未設定緊急聯繫人的 LINE user ID'
+      };
+    }
+
+    // 查詢房號信息
+    let roomInfo = '未提供';
+    if (operatorProfile.unit_id) {
+      const { data: unitData } = await supabase
+        .from('units')
+        .select('unit_number, unit_code')
+        .eq('id', operatorProfile.unit_id)
+        .maybeSingle();
+      
+      if (unitData) {
+        roomInfo = unitData.unit_number || unitData.unit_code || '未提供';
+      }
+    }
+
+    // 構建緊急通知消息
+    const emergencyMessage = {
+      type: 'text',
+      text: `🚨 【緊急事件通知】\n\n` +
+            `事件類型：${eventContext}\n` +
+            `住户姓名：${operatorProfile.name || '未提供'}\n` +
+            `房號：${roomInfo}\n` +
+            `聯繫電話：${operatorProfile.emergency_contact_phone || '未提供'}\n` +
+            `事件時間：${new Date().toLocaleString('zh-TW', { hour12: false })}\n\n` +
+            `⚠️ 請立即採取行動！`
+    };
+
+    // 發送消息給緊急聯繫人
+    await client.pushMessage(operatorProfile.emergency_contact_line_user_id, emergencyMessage);
+
+    console.log(`🚨 [緊急通知] ✅ 已發送給 ${operatorProfile.emergency_contact_name}`);
+    
+    return { 
+      success: true, 
+      message: '緊急通知已發送',
+      contactName: operatorProfile.emergency_contact_name
+    };
+
+  } catch (err) {
+    console.error('[緊急通知] ❌ 發送失敗:', err.message);
+    return { 
+      success: false, 
+      message: `發送失敗: ${err.message}` 
+    };
+  }
+}
+
 function buildEmergencyConfirmFlex(sessionId, eventType, location, description, imageUrl) {
   const bubble = {
     type: 'bubble',
