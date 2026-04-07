@@ -1,7 +1,7 @@
 import { supabase } from '@/utils/supabaseClient';
-import { LineSDK } from '@line/bot-sdk';
+import { Client } from '@line/bot-sdk';
 
-const lineClient = new LineSDK.messagingApi.MessagingApiClient({
+const lineClient = new Client({
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN
 });
 const webhookSecret = process.env.IOT_WEBHOOK_SECRET;
@@ -122,10 +122,7 @@ export async function POST(req) {
     try {
       console.log('[IoT 緊急事件] 發送消息給緊急聯繫人:', operatorProfile.emergency_contact_line_user_id);
       
-      const pushResult = await lineClient.pushMessage({
-        to: operatorProfile.emergency_contact_line_user_id,
-        messages: [emergencyMessage]
-      });
+      await lineClient.pushMessage(operatorProfile.emergency_contact_line_user_id, emergencyMessage);
 
       console.log('[IoT 緊急事件] ✅ 消息已發送給緊急聯繫人');
 
