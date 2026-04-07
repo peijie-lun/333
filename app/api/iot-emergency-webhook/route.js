@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabaseClient';
+import { supabase } from '../../../supabaseClient.js';
 import { Client } from '@line/bot-sdk';
 
 const lineClient = new Client({
