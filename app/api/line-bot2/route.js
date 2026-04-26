@@ -18,6 +18,7 @@ import { chat } from '../../../grokmain.js';
 import 'dotenv/config';
 
 export const runtime = 'nodejs';
+const BOT_TAG = 'BOT2';
 
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN_BOT2,
@@ -469,7 +470,7 @@ function cleanupProcessedWebhookEvents(now = Date.now()) {
 // 處理 LINE Webhook 請求
 export async function POST(req) {
   const requestId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-  console.log(`\n========== [${requestId}] 新的 Webhook 請求 ==========`);
+  console.log(`\n========== [${BOT_TAG}] [${requestId}] 新的 Webhook 請求 ==========`);
   
   try {
     const rawBody = await req.text();// 取得原始請求體
@@ -482,7 +483,7 @@ export async function POST(req) {
     console.log('[Debug] Body length:', rawBody.length);
     
     if (!signature) {
-      console.error('[Signature Error] No signature header');
+      console.error(`[${BOT_TAG}] [Signature Error] No signature header`);
       return new Response('Unauthorized', { status: 401 });
     }
     
@@ -490,7 +491,7 @@ export async function POST(req) {
     console.log('[Debug] Signature valid:', isValid);
     
     if (!isValid) {
-      console.error('[Signature Error] Invalid signature');
+      console.error(`[${BOT_TAG}] [Signature Error] Invalid signature`);
       return new Response('Unauthorized', { status: 401 });
     }
 
