@@ -582,7 +582,7 @@ export async function POST(req) {
           try {
             await safeReplyMessage(event.replyToken, userId, {
               type: 'text',
-              text: '👋 歡迎加入！\n\n我是緊急事件通知機器人。\n\nℹ️ 如果您是緊急聯絡人，請輸入您的手機號碼（10位數字）進行綁定，未來將接收到住戶的緊急事件通知。\n\n例如：0912345678'
+              text: '👋 歡迎加入！\n\n我是緊急事件通知機器人。\n\n如果您是緊急聯絡人，請輸入您的手機號碼（10位數字）進行綁定，未來將接收到住戶的緊急事件通知。\n\n例如：0912345678'
             });
             usedReplyTokens.add(event.replyToken);
           } catch (err) {
