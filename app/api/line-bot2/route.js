@@ -576,9 +576,104 @@ export async function POST(req) {
         ], { onConflict: 'line_user_id' });
 
         if (upsertError) console.error('❌ Supabase upsert 錯誤:', upsertError);
+
+        // 若是 follow 事件，發送歡迎訊息
+        if (event.type === 'follow') {
+          try {
+            await safeReplyMessage(event.replyToken, userId, {
+              type: 'text',
+              text: '👋 歡迎加入！\n\n我是緊急事件通知機器人。\n\nℹ️ 如果您是緊急聯絡人，請輸入您的手機號碼（10位數字）進行綁定，未來將接收到住戶的緊急事件通知。\n\n例如：0912345678'
+            });
+            usedReplyTokens.add(event.replyToken);
+          } catch (err) {
+            console.error('❌ 發送 follow 歡迎訊息失敗:', err);
+          }
+        }
       }
 
-      // --- 2. 處理文字訊息 ---
+      // --- 2. 處理緊急聯絡人綁定 ---
+      if (event.type === 'message' && event.message.type === 'text') {
+        const userText = event.message.text.trim();
+        const replyToken = event.replyToken;
+        
+        // 🚨 檢查是否是緊急聯絡人綁定（手機號碼格式）
+        const phoneRegex = /^[0-9]{10}$/; // 台灣手機號碼（10位）
+        if (phoneRegex.test(userText)) {
+          console.log('🚨 [緊急聯絡人] 檢測到手機號碼:', userText);
+          try {
+            // 根據手機號碼查詢 emergency_contacts
+            const { data: emergencyContact, error: queryError } = await supabase
+              .from('emergency_contacts')
+              .select('id, profile_id, contact_name, contact_phone, contact_line_user_id')
+              .eq('contact_phone', userText)
+              .eq('contact_line_user_id', null) // 只查詢未綁定的
+              .maybeSingle();
+
+            if (queryError) {
+              console.error('❌ [緊急聯絡人] 查詢失敗:', queryError);
+              await safeReplyMessage(replyToken, userId, {
+                type: 'text',
+                text: '❌ 查詢失敗，請稍後再試'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            if (!emergencyContact) {
+              console.warn('⚠️ [緊急聯絡人] 未找到相應的緊急聯絡人');
+              await safeReplyMessage(replyToken, userId, {
+                type: 'text',
+                text: '⚠️ 未找到相應的緊急聯絡人記錄，或此手機號碼已綁定'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            // 更新 emergency_contacts，綁定 LINE ID
+            const { error: updateError } = await supabase
+              .from('emergency_contacts')
+              .update({
+                contact_line_user_id: userId,
+                contact_line_display_name: profile.displayName || '',
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', emergencyContact.id);
+
+            if (updateError) {
+              console.error('❌ [緊急聯絡人] 綁定失敗:', updateError);
+              await safeReplyMessage(replyToken, userId, {
+                type: 'text',
+                text: '❌ 綁定失敗，請稍後再試'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            console.log('✅ [緊急聯絡人] 綁定成功:', {
+              emergency_contact_id: emergencyContact.id,
+              contact_name: emergencyContact.contact_name,
+              line_user_id: userId
+            });
+
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: `✅ 緊急聯絡人綁定成功！\n\n姓名: ${emergencyContact.contact_name}\n手機: ${emergencyContact.contact_phone}\n\n您現在將接收來自該住戶的緊急事件通知。`
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          } catch (err) {
+            console.error('❌ [緊急聯絡人] 處理錯誤:', err);
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: '❌ 處理過程中發生錯誤，請稍後再試'
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+        }
+      }
+
+      // --- 3. 處理文字訊息 ---
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
