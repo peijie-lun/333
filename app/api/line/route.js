@@ -591,16 +591,17 @@ export async function POST(req) {
         // --- 2. 處理緊急聯絡人綁定（若使用者輸入 10 位手機號碼） ---
         if (event.type === 'message' && event.message.type === 'text') {
           const userText = event.message.text.trim();
+          const normalizedPhone = userText.replace(/[^0-9]/g, '');
           const replyToken = event.replyToken;
           const phoneRegex = /^[0-9]{10}$/; // 台灣手機號碼（10位）
-          if (phoneRegex.test(userText)) {
-            console.log('🚨 [緊急聯絡人] 檢測到手機號碼:', userText);
+          if (phoneRegex.test(normalizedPhone)) {
+            console.log('🚨 [緊急聯絡人] 檢測到手機號碼:', normalizedPhone);
             try {
               const { data: emergencyContact, error: queryError } = await supabase
                 .from('emergency_contacts')
                 .select('id, contact_name, contact_phone, contact_line_user_id')
-                .eq('contact_phone', userText)
-                .eq('contact_line_user_id', null)
+                .eq('contact_phone', normalizedPhone)
+                .is('contact_line_user_id', null)
                 .maybeSingle();
 
               if (queryError) {
