@@ -192,6 +192,20 @@ async function safeReplyMessage(replyToken, userId, message) {
   }
 }
 
+async function tryGetLineProfile(userId) {
+  try {
+    return await client.getProfile(userId);
+  } catch (err) {
+    const statusCode = err?.statusCode || err?.originalError?.status;
+    if (statusCode === 404) {
+      console.warn('⚠️ LINE profile 404，略過 profile 取得，改用 userId。', { userId });
+      return null;
+    }
+    console.warn('⚠️ 無法抓到 profile，只存 userId。', err);
+    return null;
+  }
+}
+
 /**
  * 🚨 推播緊急通知給住户的聯繫人
  * 當 IoT 設備或其他系統觸發緊急事件時使用此函數
@@ -534,13 +548,9 @@ export async function POST(req) {
         continue;
       }
 
-      // 嘗試抓 LINE Profile
-      let profile = { displayName: '', pictureUrl: '', statusMessage: '' };
-      try {
-        profile = await client.getProfile(userId);// 抓取使用者個人資料
-      } catch (err) {
-        console.warn('⚠️ 無法抓到 profile，只存 userId。', err);
-      }
+      // 嘗試抓 LINE Profile，但失敗不影響後續流程
+      const fetchedProfile = await tryGetLineProfile(userId);
+      let profile = fetchedProfile || { displayName: '', pictureUrl: '', statusMessage: '' };
 
       // --- 1. 檢查使用者是否已存在 profiles ---
       const { data: existingProfile, error: checkError } = await supabase
@@ -576,19 +586,6 @@ export async function POST(req) {
         ], { onConflict: 'line_user_id' });
 
         if (upsertError) console.error('❌ Supabase upsert 錯誤:', upsertError);
-
-        // 若是 follow 事件且為新使用者，發送歡迎訊息（避免重複）
-        if (event.type === 'follow' && !existingProfile) {
-          try {
-            await safeReplyMessage(event.replyToken, userId, {
-              type: 'text',
-              text: '👋 歡迎加入！\n\n我是緊急事件通知機器人。\n\n如果您是緊急聯絡人，請輸入您的手機號碼（10位數字）進行綁定，未來將接收到住戶的緊急事件通知。\n\n例如：0912345678'
-            });
-            usedReplyTokens.add(event.replyToken);
-          } catch (err) {
-            console.error('❌ 發送 follow 歡迎訊息失敗:', err);
-          }
-        }
       }
 
       // --- 2. 處理緊急聯絡人綁定 ---

@@ -192,6 +192,20 @@ async function safeReplyMessage(replyToken, userId, message) {
   }
 }
 
+async function tryGetLineProfile(userId) {
+  try {
+    return await client.getProfile(userId);
+  } catch (err) {
+    const statusCode = err?.statusCode || err?.originalError?.status;
+    if (statusCode === 404) {
+      console.warn('⚠️ LINE profile 404，略過 profile 取得，改用 userId。', { userId });
+      return null;
+    }
+    console.warn('⚠️ 無法抓到 profile，只存 userId。', err);
+    return null;
+  }
+}
+
 /**
  * 🚨 推播緊急通知給住户的聯繫人
  * 當 IoT 設備或其他系統觸發緊急事件時使用此函數
@@ -534,13 +548,9 @@ export async function POST(req) {
         continue;
       }
 
-      // 嘗試抓 LINE Profile
-      let profile = { displayName: '', pictureUrl: '', statusMessage: '' };
-      try {
-        profile = await client.getProfile(userId);// 抓取使用者個人資料
-      } catch (err) {
-        console.warn('⚠️ 無法抓到 profile，只存 userId。', err);
-      }
+      // 嘗試抓 LINE Profile，但失敗不影響後續流程
+      const fetchedProfile = await tryGetLineProfile(userId);
+      let profile = fetchedProfile || { displayName: '', pictureUrl: '', statusMessage: '' };
 
       // --- 1. 檢查使用者是否已存在 profiles ---
       const { data: existingProfile, error: checkError } = await supabase
@@ -577,6 +587,67 @@ export async function POST(req) {
 
         if (upsertError) console.error('❌ Supabase upsert 錯誤:', upsertError);
       }
+
+        // --- 2. 處理緊急聯絡人綁定（若使用者輸入 10 位手機號碼） ---
+        if (event.type === 'message' && event.message.type === 'text') {
+          const userText = event.message.text.trim();
+          const replyToken = event.replyToken;
+          const phoneRegex = /^[0-9]{10}$/; // 台灣手機號碼（10位）
+          if (phoneRegex.test(userText)) {
+            console.log('🚨 [緊急聯絡人] 檢測到手機號碼:', userText);
+            try {
+              const { data: emergencyContact, error: queryError } = await supabase
+                .from('emergency_contacts')
+                .select('id, contact_name, contact_phone, contact_line_user_id')
+                .eq('contact_phone', userText)
+                .eq('contact_line_user_id', null)
+                .maybeSingle();
+
+              if (queryError) {
+                console.error('❌ [緊急聯絡人] 查詢失敗:', queryError);
+                await safeReplyMessage(replyToken, userId, { type: 'text', text: '❌ 查詢失敗，請稍後再試' });
+                usedReplyTokens.add(replyToken);
+                continue;
+              }
+
+              if (!emergencyContact) {
+                console.warn('⚠️ [緊急聯絡人] 未找到相應的緊急聯絡人');
+                await safeReplyMessage(replyToken, userId, { type: 'text', text: '⚠️ 未找到相應的緊急聯絡人記錄，或此手機號碼已綁定' });
+                usedReplyTokens.add(replyToken);
+                continue;
+              }
+
+              const { error: updateError } = await supabase
+                .from('emergency_contacts')
+                .update({
+                  contact_line_user_id: userId,
+                  contact_line_display_name: profile.displayName || '',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', emergencyContact.id);
+
+              if (updateError) {
+                console.error('❌ [緊急聯絡人] 綁定失敗:', updateError);
+                await safeReplyMessage(replyToken, userId, { type: 'text', text: '❌ 綁定失敗，請稍後再試' });
+                usedReplyTokens.add(replyToken);
+                continue;
+              }
+
+              console.log('✅ [緊急聯絡人] 綁定成功:', { emergency_contact_id: emergencyContact.id, contact_name: emergencyContact.contact_name, line_user_id: userId });
+              await safeReplyMessage(replyToken, userId, {
+                type: 'text',
+                text: `✅ 緊急聯絡人綁定成功！\n\n姓名: ${emergencyContact.contact_name}\n手機: ${emergencyContact.contact_phone}\n\n您現在將接收來自該住戶的緊急事件通知。`
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            } catch (err) {
+              console.error('❌ [緊急聯絡人] 處理錯誤:', err);
+              await safeReplyMessage(replyToken, userId, { type: 'text', text: '❌ 處理過程中發生錯誤，請稍後再試' });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+          }
+        }
 
       // --- 2. 處理文字訊息 ---
       if (event.type === 'message' && event.message.type === 'text') {
