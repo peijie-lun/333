@@ -601,7 +601,7 @@ export async function POST(req) {
                 .from('emergency_contacts')
                 .select('id, contact_name, contact_phone, contact_line_user_id')
                 .eq('contact_phone', normalizedPhone)
-                .is('contact_line_user_id', null)
+                .or('contact_line_user_id.is.null,contact_line_user_id.eq.""')
                 .maybeSingle();
 
               if (queryError) {
