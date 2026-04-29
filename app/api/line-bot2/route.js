@@ -577,8 +577,8 @@ export async function POST(req) {
 
         if (upsertError) console.error('❌ Supabase upsert 錯誤:', upsertError);
 
-        // 若是 follow 事件，發送歡迎訊息
-        if (event.type === 'follow') {
+        // 若是 follow 事件且為新使用者，發送歡迎訊息（避免重複）
+        if (event.type === 'follow' && !existingProfile) {
           try {
             await safeReplyMessage(event.replyToken, userId, {
               type: 'text',
@@ -604,7 +604,7 @@ export async function POST(req) {
             // 根據手機號碼查詢 emergency_contacts
             const { data: emergencyContact, error: queryError } = await supabase
               .from('emergency_contacts')
-              .select('id, profile_id, contact_name, contact_phone, contact_line_user_id')
+              .select('id, contact_name, contact_phone, contact_line_user_id')
               .eq('contact_phone', userText)
               .eq('contact_line_user_id', null) // 只查詢未綁定的
               .maybeSingle();
