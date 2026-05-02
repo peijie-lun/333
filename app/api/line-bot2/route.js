@@ -632,7 +632,6 @@ export async function POST(req) {
               .from('emergency_contacts')
               .update({
                 contact_line_user_id: userId,
-                contact_line_display_name: profile.displayName || '',
                 updated_at: new Date().toISOString()
               })
               .eq('id', emergencyContact.id);
