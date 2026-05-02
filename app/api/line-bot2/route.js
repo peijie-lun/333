@@ -1420,7 +1420,6 @@ export async function POST(req) {
                 reported_by_id: existingProfile?.id || null,
                 created_by: existingProfile?.id || null,
                 unit_id: existingProfile?.unit_id || null,
-                reported_by_name: existingProfile?.name || existingProfile?.line_display_name || null,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
               }])
@@ -2537,7 +2536,6 @@ export async function POST(req) {
                 reported_by_id: existingProfile?.id || null,
                 created_by: existingProfile?.id || null,
                 unit_id: existingProfile?.unit_id || null,
-                reported_by_name: existingProfile?.name || existingProfile?.line_display_name || null,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
               }])
