@@ -1658,24 +1658,31 @@ export async function POST(req) {
         // 0.4️⃣ 緊急事件送審 - 方案C：引導式 + 快速選項
         if (cleanText === '回報緊急事件') {
           try {
+            console.log('[🚨 Emergency] 啟動緊急事件流程');
             // 清除舊的未完成會話
             emergencySessions.delete(userId);
 
             // 建立新會話記錄到 emergency_incidents（初始狀態 draft）
+            console.log('[🚨 Emergency] 準備 insert，userId:', userId);
             const { data: newIncident, error: sessionErr } = await supabase
               .from('emergency_incidents')
               .insert([{
                 source: 'line_session',
                 reporter_line_user_id: userId,
-                reporter_profile_id: existingProfile?.id || null,
-                status: 'draft',
-                event_type: null,
-                location: null,
-                description: null
+                status: 'draft'
               }])
               .select('id')
               .maybeSingle();
 
+            if (sessionErr) {
+              console.error('[🚨 Emergency] ❌ Insert 失敗，錯誤詳情:', {
+                message: sessionErr.message,
+                code: sessionErr.code,
+                details: sessionErr.details,
+                hint: sessionErr.hint
+              });
+            }
+            
             if (sessionErr || !newIncident) {
               console.error('❌ 建立會話失敗:', sessionErr);
               await safeReplyMessage(replyToken, userId, {
@@ -1685,6 +1692,8 @@ export async function POST(req) {
               usedReplyTokens.add(replyToken);
               continue;
             }
+            
+            console.log('[🚨 Emergency] ✅ Insert 成功，新 incident ID:', newIncident.id);
 
             // 記錄會話到內存
             emergencySessions.set(userId, {
