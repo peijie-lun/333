@@ -1531,9 +1531,6 @@ export async function POST(req) {
 
         // ===== 檢查是否有進行中的緊急事件會話 =====
         const activeSession = emergencySessions.get(userId);
-        
-        if (!activeSession) {
-          console.log('[DEBUG] 無進行中的緊急會話');
 
         if (activeSession && cleanText !== '回報緊急事件') {
           try {
