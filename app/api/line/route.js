@@ -879,6 +879,14 @@ export async function POST(req) {
             .maybeSingle();
 
           if (bookingErr || !createdBooking) {
+            console.error('[Booking Error] bookingErr:', bookingErr, 'createdBooking:', createdBooking, {
+              facilityId: facilitySession.facilityId,
+              bookingDate: facilitySession.bookingDate,
+              start: timeRange.start,
+              end: timeRange.end,
+              userId: existingProfile?.id
+            });
+
             await supabase
               .from('profiles')
               .update({
@@ -890,7 +898,7 @@ export async function POST(req) {
             facilityBookingSessions.delete(userId);
             await safeReplyMessage(replyToken, userId, {
               type: 'text',
-              text: '預約失敗，請稍後再試。'
+              text: '預約失敗，請稍後再試（已記錄錯誤）'
             });
             usedReplyTokens.add(replyToken);
             continue;

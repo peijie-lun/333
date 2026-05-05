@@ -883,16 +883,6 @@ export async function POST(req) {
             continue;
           }
 
-          let userRoom = null;
-          if (existingProfile?.unit_id) {
-            const { data: unitData } = await supabase
-              .from('units')
-              .select('unit_number, unit_code')
-              .eq('id', existingProfile.unit_id)
-              .maybeSingle();
-            userRoom = unitData?.unit_number || unitData?.unit_code || null;
-          }
-
           const { data: createdBooking, error: bookingErr } = await supabase
             .from('facility_bookings')
             .insert([{
@@ -903,8 +893,6 @@ export async function POST(req) {
               end_time: `${timeRange.end}:00`,
               status: 'confirmed',
               unit_id: existingProfile.unit_id || null,
-              user_name: existingProfile.name || existingProfile.line_display_name || null,
-              user_room: userRoom,
               notes: 'LINE Bot 預約',
               points_spent: bookingPoints
             }])
