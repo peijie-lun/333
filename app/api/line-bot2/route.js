@@ -3332,8 +3332,8 @@ export async function POST(req) {
 
             // 讀取事件
             const { data: emergencyEvent, error: eventQueryErr } = await supabase
-              .from('emergency_reports_line')
-              .select('id, event_type, location, description, image_url, status')
+              .from('emergency_incidents')
+              .select('id, event_type, location, description, image_url, status, source_record_id')
               .eq('id', emergencyEventId)
               .maybeSingle();
 
@@ -3346,10 +3346,12 @@ export async function POST(req) {
               continue;
             }
 
-            if (emergencyEvent.status !== 'pending') {
+            if (emergencyEvent.status !== 'submitted') {
               const statusLabelMap = {
                 approved: '已發布',
                 rejected: '已駁回',
+                submitted: '待審核',
+                draft: '編輯中',
                 pending: '待審核'
               };
               const currentStatusLabel = statusLabelMap[emergencyEvent.status] || emergencyEvent.status;
@@ -3370,7 +3372,7 @@ export async function POST(req) {
 
             const newStatus = action === 'approve' ? 'approved' : 'rejected';
             const { error: updateErr } = await supabase
-              .from('emergency_reports_line')
+              .from('emergency_incidents')
               .update({
                 status: newStatus,
                 reviewed_by: adminProfile.id,
