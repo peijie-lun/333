@@ -257,7 +257,7 @@ async function notifyEmergencyContact(operatorProfileId, eventContext = 'IoT 緊
       .eq('verify_status', 'verified')
       .order('updated_at', { ascending: false })
       .limit(1)
-      .maybeSingle();
+      .maybeSingle();    
 
     if (emergencyContactError) {
       console.error('[緊急通知] ❌ 無法查詢緊急聯絡人:', emergencyContactError);

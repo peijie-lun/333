@@ -591,7 +591,7 @@ export async function POST(req) {
         if (upsertError) console.error('❌ Supabase upsert 錯誤:', upsertError);
       }
 
-      // --- 2. 處理緊急聯絡人綁定 ---
+      // --- 2. 處理緊急聯絡人綁定 ---    
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text.trim();
         const normalizedPhone = userText.replace(/[^0-9]/g, '');
