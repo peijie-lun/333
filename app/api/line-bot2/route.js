@@ -1549,15 +1549,15 @@ export async function POST(req) {
                 continue;
               }
 
-              // 使用者輸入自訂事件類型 - 更新 emergency_incidents
+              // 使用者輸入自訂事件類型 - 更新 emergency_incidents（只改 event_type）
               const { error: updateErr } = await supabase
                 .from('emergency_incidents')
                 .update({
                   event_type: normalizedEventType,
-                  status: 'location',
                   updated_at: new Date().toISOString()
                 })
-                .eq('id', activeSession.incidentId);
+                .eq('id', activeSession.incidentId)
+                .eq('status', 'draft');
 
               if (updateErr) throw updateErr;
 
@@ -1582,10 +1582,10 @@ export async function POST(req) {
                 .from('emergency_incidents')
                 .update({
                   location: userText,
-                  status: 'description',
                   updated_at: new Date().toISOString()
                 })
-                .eq('id', activeSession.incidentId);
+                .eq('id', activeSession.incidentId)
+                .eq('status', 'draft');
 
               if (updateErr) throw updateErr;
 
@@ -1620,10 +1620,10 @@ export async function POST(req) {
                 .from('emergency_incidents')
                 .update({
                   description: normalizedDescription,
-                  status: 'confirm',
                   updated_at: new Date().toISOString()
                 })
-                .eq('id', activeSession.incidentId);
+                .eq('id', activeSession.incidentId)
+                .eq('status', 'draft');
 
               if (saveDescErr) throw saveDescErr;
 
@@ -2947,15 +2947,15 @@ export async function POST(req) {
               continue;
             }
 
-            // 更新 emergency_incidents 表
+            // 更新 emergency_incidents 表（只更新 event_type，不改 status）
             const { error: updateErr } = await supabase
               .from('emergency_incidents')
               .update({
                 event_type: eventType,
-                status: 'location',
                 updated_at: new Date().toISOString()
               })
-              .eq('id', activeSession.incidentId);
+              .eq('id', activeSession.incidentId)
+              .eq('status', 'draft'); // 只更新還在 draft 狀態的事件
 
             if (updateErr) {
               console.error('[🚨 Postback] ❌ 更新會話失敗:', updateErr);
@@ -2966,10 +2966,10 @@ export async function POST(req) {
               continue;
             }
 
-            // 更新內存狀態
+            // 更新內存狀態（追蹤流程步驟）
             emergencySessions.set(userId, {
               ...activeSession,
-              status: 'location',
+              status: 'location', // 內存中的步驟
               event_type: eventType
             });
 
@@ -3105,12 +3105,12 @@ export async function POST(req) {
 
             const nowIso = new Date().toISOString();
 
-            // 從 emergency_incidents 取得當前資料並更新狀態
+            // 從 emergency_incidents 取得當前資料
             const { data: incident, error: fetchErr } = await supabase
               .from('emergency_incidents')
               .select('*')
               .eq('id', activeSession.incidentId)
-              .eq('status', 'confirm')
+              .eq('status', 'draft')
               .single();
 
             if (fetchErr || !incident) {
@@ -3123,14 +3123,15 @@ export async function POST(req) {
               continue;
             }
 
-            // 更新 emergency_incidents 狀態為 submitted
+            // 更新 emergency_incidents 狀態為 submitted（這才是真正的狀態改變）
             const { error: updateErr } = await supabase
               .from('emergency_incidents')
               .update({
                 status: 'submitted',
                 updated_at: nowIso
               })
-              .eq('id', activeSession.incidentId);
+              .eq('id', activeSession.incidentId)
+              .eq('status', 'draft');
 
             if (updateErr) throw updateErr;
 
