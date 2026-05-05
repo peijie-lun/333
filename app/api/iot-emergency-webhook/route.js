@@ -1,9 +1,24 @@
 import { supabase } from '../../../supabaseClient.js';
 import { Client } from '@line/bot-sdk';
 
-// 使用 Bot2 的 token，若未設定則回落到 Bot1
-const lineClient = new Client({
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN_BOT2 || process.env.LINE_CHANNEL_ACCESS_TOKEN
+const bot1Token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+const bot2Token = process.env.LINE_CHANNEL_ACCESS_TOKEN_BOT2 || process.env.LINE_CHANNEL_ACCESS_TOKEN;
+
+function buildLineClient(channelAccessToken) {
+  if (!channelAccessToken) {
+    return null;
+  }
+  return new Client({ channelAccessToken });
+}
+
+const pushTargets = [
+  { tag: 'BOT2', token: bot2Token, client: buildLineClient(bot2Token) },
+  { tag: 'BOT1', token: bot1Token, client: buildLineClient(bot1Token) }
+].filter((target, index, self) => {
+  if (!target.client || !target.token) {
+    return false;
+  }
+  return self.findIndex((item) => item.token === target.token) === index;
 });
 const BOT_TAG = 'BOT2';
 const webhookSecret = process.env.IOT_WEBHOOK_SECRET;
@@ -38,7 +53,6 @@ function isEmergencyEvent(record) {
 }
 
 function buildEventMessage(record, unitInfo, recipientProfile) {
-  const eventData = normalizeConfiguration(record.event_data);
   const createdAt = record.created_at
     ? new Date(record.created_at).toLocaleString('zh-TW', { hour12: false })
     : new Date().toLocaleString('zh-TW', { hour12: false });
@@ -59,14 +73,6 @@ function buildEventMessage(record, unitInfo, recipientProfile) {
 
   if (record.message) {
     lines.push('', `詳細訊息：${safeString(record.message)}`);
-  }
-
-  if (Object.keys(eventData).length > 0) {
-    lines.push('', '事件資料：');
-    Object.entries(eventData).forEach(([key, value]) => {
-      const displayValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
-      lines.push(`  ${key}: ${displayValue}`);
-    });
   }
 
   lines.push('', '⚠️ 請立即確認並採取適當行動');
@@ -251,8 +257,21 @@ export async function POST(req) {
 
     const message = buildEventMessage(record, unitInfo, recipient.profile);
 
-    console.log(`📤 [${BOT_TAG}] [IoT 事件] 發送消息給 LINE user:`, recipient.lineUserId);
-    await lineClient.pushMessage(recipient.lineUserId, message);
+    const successTargets = [];
+
+    for (const target of pushTargets) {
+      try {
+        console.log(`📤 [${target.tag}] [IoT 事件] 發送消息給 LINE user:`, recipient.lineUserId);
+        await target.client.pushMessage(recipient.lineUserId, message);
+        successTargets.push(target.tag);
+      } catch (pushErr) {
+        console.warn(`⚠️ [${target.tag}] [IoT 事件] 推播失敗:`, pushErr.message);
+      }
+    }
+
+    if (successTargets.length === 0) {
+      return Response.json({ success: false, message: 'LINE push failed for all configured bots' }, { status: 502 });
+    }
 
     // 標記該事件已處理
     try {
@@ -273,7 +292,8 @@ export async function POST(req) {
       eventId: record.id,
       deviceId: record.device_id,
       eventType: record.event_type,
-      recipientLineUserId: recipient.lineUserId
+      recipientLineUserId: recipient.lineUserId,
+      pushedByBots: successTargets
     }, { status: 200 });
   } catch (err) {
     console.error(`❌ [${BOT_TAG}] [IoT 事件] Webhook 處理失敗:`, err);
