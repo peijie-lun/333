@@ -154,10 +154,26 @@ export async function POST(req) {
       return Response.json({ success: false, message: 'Unauthorized webhook' }, { status: 401 });
     }
 
-    const body = await req.json();
+    const rawBody = await req.text();
+    console.log(`📥 [${BOT_TAG}] [IoT 事件] Webhook raw body length: ${rawBody.length}`);
+    console.log(`📥 [${BOT_TAG}] [IoT 事件] Webhook raw body preview: ${rawBody.slice(0, 1000)}`);
+
+    let body = {};
+    if (rawBody) {
+      try {
+        body = JSON.parse(rawBody);
+      } catch (parseErr) {
+        console.warn(`⚠️ [${BOT_TAG}] [IoT 事件] JSON 解析失敗:`, parseErr.message);
+        return Response.json({ success: false, message: 'Invalid JSON payload' }, { status: 400 });
+      }
+    }
+
     console.log(`📥 [${BOT_TAG}] [IoT 事件] Webhook 內容:`, JSON.stringify(body, null, 2));
 
-    const { type, table, record } = body;
+    const isWrappedPayload = body && typeof body === 'object' && (Object.prototype.hasOwnProperty.call(body, 'record') || Object.prototype.hasOwnProperty.call(body, 'type') || Object.prototype.hasOwnProperty.call(body, 'table'));
+    const type = isWrappedPayload ? (body.type || 'INSERT') : 'INSERT';
+    const table = isWrappedPayload ? (body.table || SOURCE_TABLE) : SOURCE_TABLE;
+    const record = isWrappedPayload ? (body.record || body.new || body.old || {}) : body;
 
     if (!record || typeof record !== 'object') {
       console.warn(`⚠️ [${BOT_TAG}] [IoT 事件] 缺少 record 內容`);
