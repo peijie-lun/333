@@ -1549,17 +1549,24 @@ export async function POST(req) {
                 continue;
               }
 
-              // 使用者輸入自訂事件類型
+              // 使用者輸入自訂事件類型 - 更新 emergency_incidents
               const { error: updateErr } = await supabase
-                .from('emergency_sessions')
+                .from('emergency_incidents')
                 .update({
                   event_type: normalizedEventType,
                   status: 'location',
                   updated_at: new Date().toISOString()
                 })
-                .eq('id', activeSession.id);
+                .eq('id', activeSession.incidentId);
 
               if (updateErr) throw updateErr;
+
+              // 更新內存狀態
+              emergencySessions.set(userId, {
+                ...activeSession,
+                status: 'location',
+                event_type: normalizedEventType
+              });
 
               await client.replyMessage(replyToken, {
                 type: 'text',
@@ -1572,15 +1579,22 @@ export async function POST(req) {
             if (activeSession.status === 'location') {
               // 使用者輸入地點
               const { error: updateErr } = await supabase
-                .from('emergency_sessions')
+                .from('emergency_incidents')
                 .update({
                   location: userText,
                   status: 'description',
                   updated_at: new Date().toISOString()
                 })
-                .eq('id', activeSession.id);
+                .eq('id', activeSession.incidentId);
 
               if (updateErr) throw updateErr;
+
+              // 更新內存狀態
+              emergencySessions.set(userId, {
+                ...activeSession,
+                status: 'description',
+                location: userText
+              });
 
               await client.replyMessage(replyToken, {
                 type: 'text',
@@ -1603,16 +1617,22 @@ export async function POST(req) {
               }
 
               const { error: saveDescErr } = await supabase
-                .from('emergency_sessions')
+                .from('emergency_incidents')
                 .update({
                   description: normalizedDescription,
                   status: 'confirm',
                   updated_at: new Date().toISOString()
                 })
-                .eq('id', activeSession.id)
-                .eq('status', 'description');
+                .eq('id', activeSession.incidentId);
 
               if (saveDescErr) throw saveDescErr;
+
+              // 更新內存狀態
+              emergencySessions.set(userId, {
+                ...activeSession,
+                status: 'confirm',
+                description: normalizedDescription
+              });
 
               await client.replyMessage(replyToken, {
                 type: 'text',
@@ -1625,7 +1645,7 @@ export async function POST(req) {
             if (activeSession.status === 'confirm') {
               if (userText === '略過' || userText === '跳過') {
                 const confirmFlex = buildEmergencyConfirmFlex(
-                  activeSession.id,
+                  activeSession.incidentId,
                   activeSession.event_type,
                   activeSession.location,
                   activeSession.description,
@@ -2430,25 +2450,19 @@ export async function POST(req) {
 
         // 緊急事件流程的圖片上傳（優先處理，避免誤判成報修）
         try {
-          const { data: activeEmergencySession } = await supabase
-            .from('emergency_sessions')
-            .select('id, status, event_type, location, description')
-            .eq('line_user_id', userId)
-            .neq('status', 'submitted')
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+          const activeEmergencySession = emergencySessions.get(userId);
 
           if (activeEmergencySession) {
             const uploadedImageUrl = await uploadEmergencyImageFromLineMessage(messageId, userId);
 
+            // 更新 emergency_incidents 表的圖片
             const { error: saveImageErr } = await supabase
-              .from('emergency_sessions')
+              .from('emergency_incidents')
               .update({
                 image_url: uploadedImageUrl,
                 updated_at: new Date().toISOString()
               })
-              .eq('id', activeEmergencySession.id);
+              .eq('id', activeEmergencySession.incidentId);
 
             if (saveImageErr) {
               console.error('❌ 緊急事件圖片保存失敗:', saveImageErr);
@@ -2460,6 +2474,12 @@ export async function POST(req) {
               continue;
             }
 
+            // 更新內存狀態
+            emergencySessions.set(userId, {
+              ...activeEmergencySession,
+              image_url: uploadedImageUrl
+            });
+
             let nextStepText = '✅ 圖片已附加到本次緊急事件。';
             if (activeEmergencySession.status === 'event_type') {
               nextStepText += '\n請先選擇或輸入事件類型。';
@@ -2469,7 +2489,7 @@ export async function POST(req) {
               nextStepText += '\n請繼續輸入事件描述。';
             } else if (activeEmergencySession.status === 'confirm') {
               const confirmFlex = buildEmergencyConfirmFlex(
-                activeEmergencySession.id,
+                activeEmergencySession.incidentId,
                 activeEmergencySession.event_type,
                 activeEmergencySession.location,
                 activeEmergencySession.description,
@@ -2915,19 +2935,30 @@ export async function POST(req) {
         if (action === 'select_event_type') {
           const eventType = params.get('type');
           try {
-            // 更新會話：保存事件類型並移到下一步
+            console.log('[🚨 Postback] select_event_type:', { userId, eventType });
+            const activeSession = emergencySessions.get(userId);
+            
+            if (!activeSession) {
+              console.error('[🚨 Postback] ❌ 找不到活躍會話');
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 會話已過期，請重新開始。'
+              });
+              continue;
+            }
+
+            // 更新 emergency_incidents 表
             const { error: updateErr } = await supabase
-              .from('emergency_sessions')
+              .from('emergency_incidents')
               .update({
                 event_type: eventType,
                 status: 'location',
                 updated_at: new Date().toISOString()
               })
-              .eq('line_user_id', userId)
-              .eq('status', 'event_type');
+              .eq('id', activeSession.incidentId);
 
             if (updateErr) {
-              console.error('❌ 更新會話失敗:', updateErr);
+              console.error('[🚨 Postback] ❌ 更新會話失敗:', updateErr);
               await client.replyMessage(replyToken, {
                 type: 'text',
                 text: '❌ 發生錯誤，請稍後重試。'
@@ -2935,13 +2966,20 @@ export async function POST(req) {
               continue;
             }
 
+            // 更新內存狀態
+            emergencySessions.set(userId, {
+              ...activeSession,
+              status: 'location',
+              event_type: eventType
+            });
+
             await client.replyMessage(replyToken, {
               type: 'text',
               text: `✅ 已選擇事件類型：${eventType}\n\n📍 請輸入事件地點（例如：A棟3樓、地下室等）`
             });
             continue;
           } catch (err) {
-            console.error('❌ 事件類型選擇失敗:', err);
+            console.error('[🚨 Postback] ❌ 事件類型選擇失敗:', err);
             await client.replyMessage(replyToken, {
               type: 'text',
               text: '❌ 發生錯誤，請稍後再試。'
@@ -3052,29 +3090,31 @@ export async function POST(req) {
 
         // ===== 提交緊急事件 =====
         if (action === 'submit_emergency') {
-          const sessionId = params.get('session_id');
-
           try {
-            const nowIso = new Date().toISOString();
-
-            // 原子鎖定：只有 status=confirm 的會話才能被提交，避免重複寫入
-            const { data: session, error: sessionErr } = await supabase
-              .from('emergency_sessions')
-              .update({
-                status: 'submitted',
-                updated_at: nowIso
-              })
-              .eq('id', sessionId)
-              .eq('line_user_id', userId)
-              .eq('status', 'confirm')
-              .select('id, event_type, location, description, image_url')
-              .maybeSingle();
-
-            if (sessionErr) {
-              throw sessionErr;
+            console.log('[🚨 Submit] 準備提交緊急事件，userId:', userId);
+            const activeSession = emergencySessions.get(userId);
+            
+            if (!activeSession) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: 'ℹ️ 會話已過期，請重新開始。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
             }
 
-            if (!session) {
+            const nowIso = new Date().toISOString();
+
+            // 從 emergency_incidents 取得當前資料並更新狀態
+            const { data: incident, error: fetchErr } = await supabase
+              .from('emergency_incidents')
+              .select('*')
+              .eq('id', activeSession.incidentId)
+              .eq('status', 'confirm')
+              .single();
+
+            if (fetchErr || !incident) {
+              console.error('[🚨 Submit] ❌ 查詢事件失敗:', fetchErr);
               await client.replyMessage(replyToken, {
                 type: 'text',
                 text: 'ℹ️ 這筆緊急事件已處理或已提交，請勿重複送出。'
@@ -3083,16 +3123,27 @@ export async function POST(req) {
               continue;
             }
 
+            // 更新 emergency_incidents 狀態為 submitted
+            const { error: updateErr } = await supabase
+              .from('emergency_incidents')
+              .update({
+                status: 'submitted',
+                updated_at: nowIso
+              })
+              .eq('id', activeSession.incidentId);
+
+            if (updateErr) throw updateErr;
+
             // 寫入緊急報告
             const { data: createdEmergency, error: emergencyInsertError } = await supabase
               .from('emergency_reports_line')
               .insert([{
                 reporter_line_user_id: userId,
                 reporter_profile_id: existingProfile?.id || null,
-                event_type: session.event_type,
-                location: session.location,
-                description: session.description || '未提供',
-                image_url: session.image_url || null,
+                event_type: incident.event_type,
+                location: incident.location,
+                description: incident.description || '未提供',
+                image_url: incident.image_url || null,
                 status: 'pending',
                 created_at: nowIso,
                 updated_at: nowIso
@@ -3118,6 +3169,7 @@ export async function POST(req) {
                 text: '✅ 緊急事件已送出。\n⚠️ 目前通知管委會失敗，請稍後確認管理員帳號設定。'
               });
               usedReplyTokens.add(replyToken);
+              emergencySessions.delete(userId); // 清除內存會話
               continue;
             }
 
@@ -3132,6 +3184,7 @@ export async function POST(req) {
                 text: '✅ 緊急事件已送出。\n⚠️ 目前尚未設定可通知的管理員帳號。'
               });
               usedReplyTokens.add(replyToken);
+              emergencySessions.delete(userId); // 清除內存會話
               continue;
             }
 
@@ -3211,6 +3264,7 @@ export async function POST(req) {
               text: '✅ 緊急事件已送出，已通知管委會審核。'
             });
             usedReplyTokens.add(replyToken);
+            emergencySessions.delete(userId); // 清除內存會話
             continue;
           } catch (err) {
             console.error('❌ 提交緊急事件失敗:', err);
@@ -3225,12 +3279,23 @@ export async function POST(req) {
 
         // ===== 取消緊急事件回報 =====
         if (action === 'cancel_emergency') {
-          const sessionId = params.get('session_id');
           try {
-            await supabase
-              .from('emergency_sessions')
-              .update({ status: 'submitted', updated_at: new Date().toISOString() })
-              .eq('id', sessionId);
+            console.log('[🚨 Cancel] 準備取消緊急事件，userId:', userId);
+            const activeSession = emergencySessions.get(userId);
+            
+            if (activeSession) {
+              // 更新 emergency_incidents 狀態為 canceled
+              await supabase
+                .from('emergency_incidents')
+                .update({
+                  status: 'canceled',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', activeSession.incidentId);
+
+              // 清除內存會話
+              emergencySessions.delete(userId);
+            }
 
             await client.replyMessage(replyToken, {
               type: 'text',
