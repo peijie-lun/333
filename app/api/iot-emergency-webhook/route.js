@@ -115,6 +115,19 @@ export async function POST(req) {
 
   try {
     const inboundSecret = req.headers.get('x-webhook-secret');
+
+    // DEBUG: 檢查 env 與 inbound secret 是否存在（不會完整印出 secret）
+    console.log(`🔍 [${BOT_TAG}] IOT_WEBHOOK_SECRET present: ${!!webhookSecret}`);
+    console.log(`🔍 [${BOT_TAG}] inbound header present: ${!!inboundSecret}`);
+    if (webhookSecret) {
+      try {
+        const masked = String(webhookSecret).length > 10
+          ? String(webhookSecret).slice(0,6) + '...' + String(webhookSecret).slice(-4)
+          : '[masked]';
+        console.log(`🔒 [${BOT_TAG}] IOT_WEBHOOK_SECRET masked: ${masked}`);
+      } catch {}
+    }
+
     if (!webhookSecret) {
       console.error(`❌ [${BOT_TAG}] [IoT 事件] 未設定 IOT_WEBHOOK_SECRET`);
       return Response.json({ success: false, message: 'Server secret not configured' }, { status: 500 });
