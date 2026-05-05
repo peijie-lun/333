@@ -464,6 +464,9 @@ const repairSessions = new Map();
 // 記憶體暫存設施預約流程狀態
 const facilityBookingSessions = new Map();
 
+// 記憶體暫存緊急事件會話狀態（替代 emergency_sessions view）
+const emergencySessions = new Map();
+
 // 追蹤已使用的 replyToken（防止重複處理）
 const usedReplyTokens = new Set();
 
@@ -1527,18 +1530,10 @@ export async function POST(req) {
         }
 
         // ===== 檢查是否有進行中的緊急事件會話 =====
-        const { data: activeSession, error: sessionCheckErr } = await supabase
-          .from('emergency_sessions')
-          .select('id, event_type, location, description, status, image_url')
-          .eq('line_user_id', userId)
-          .neq('status', 'submitted')
-          .order('updated_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (sessionCheckErr) {
-          console.error('❌ 查詢緊急事件會話失敗:', sessionCheckErr);
-        }
+        const activeSession = emergencySessions.get(userId);
+        
+        if (!activeSession) {
+          console.log('[DEBUG] 無進行中的緊急會話');
 
         if (activeSession && cleanText !== '回報緊急事件') {
           try {
@@ -1667,21 +1662,24 @@ export async function POST(req) {
         if (cleanText === '回報緊急事件') {
           try {
             // 清除舊的未完成會話
-            await supabase
-              .from('emergency_sessions')
-              .delete()
-              .eq('line_user_id', userId)
-              .neq('status', 'submitted');
+            emergencySessions.delete(userId);
 
-            // 建立新會話
-            const { error: sessionErr } = await supabase
-              .from('emergency_sessions')
+            // 建立新會話記錄到 emergency_incidents（初始狀態 draft）
+            const { data: newIncident, error: sessionErr } = await supabase
+              .from('emergency_incidents')
               .insert([{
-                line_user_id: userId,
-                status: 'event_type'
-              }]);
+                source: 'line_session',
+                reporter_line_user_id: userId,
+                reporter_profile_id: existingProfile?.id || null,
+                status: 'draft',
+                event_type: null,
+                location: null,
+                description: null
+              }])
+              .select('id')
+              .maybeSingle();
 
-            if (sessionErr) {
+            if (sessionErr || !newIncident) {
               console.error('❌ 建立會話失敗:', sessionErr);
               await safeReplyMessage(replyToken, userId, {
                 type: 'text',
@@ -1690,6 +1688,12 @@ export async function POST(req) {
               usedReplyTokens.add(replyToken);
               continue;
             }
+
+            // 記錄會話到內存
+            emergencySessions.set(userId, {
+              incidentId: newIncident.id,
+              status: 'event_type'
+            });
 
             // 推送事件類型選擇卡片
             const eventTypesFlex = {
