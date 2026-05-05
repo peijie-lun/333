@@ -2171,6 +2171,12 @@ export async function POST(req) {
           continue;
         }
 
+        const activeWorkflowSession = repairSessions.get(userId) || facilityBookingSessions.get(userId) || emergencySessions.get(userId);
+        if (activeWorkflowSession) {
+          console.log('[流程保護] 偵測到進行中的報修/預約/緊急事件流程，跳過 AI 查詢');
+          continue;
+        }
+
         // 2️⃣ 其他問題 → 直接呼叫 chat 函數進行 AI 查詢
         try {
           // 再次檢查是否為系統提示訊息（雙重防護）
