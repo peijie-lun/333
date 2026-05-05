@@ -91,6 +91,22 @@ async function resolveRecipient(record) {
     };
   }
 
+  // 優先使用專用 emergency_contact_id 關聯
+  if (record.emergency_contact_id) {
+    const { data: emergencyContact, error: contactError } = await supabase
+      .from('emergency_contacts')
+      .select('contact_line_user_id, resident_profile:resident_profile_id(name)')
+      .eq('id', record.emergency_contact_id)
+      .maybeSingle();
+
+    if (!contactError && emergencyContact?.contact_line_user_id) {
+      return {
+        lineUserId: emergencyContact.contact_line_user_id,
+        profile: emergencyContact.resident_profile
+      };
+    }
+  }
+
   // 其次從 linked_record_id 關聯查詢
   if (record.linked_record_type === 'emergency' && record.linked_record_id) {
     const { data: emergencyRecord, error: emergencyError } = await supabase
@@ -172,10 +188,28 @@ export async function POST(req) {
 
     let unitInfo = { unit_number: null, unit_code: null };
     
-    // 如果有 linked_record_id，試著從相關表獲取房號資訊
-    if (record.linked_record_id && record.linked_record_type) {
+    // 如果有 emergency_contact_id 或 linked_record_id，試著從相關表獲取房號資訊
+    if (record.emergency_contact_id || (record.linked_record_id && record.linked_record_type)) {
       try {
-        if (record.linked_record_type === 'emergency') {
+        if (record.emergency_contact_id) {
+          const { data: emergencyData } = await supabase
+            .from('emergency_contacts')
+            .select('resident_profile:resident_profile_id(unit_id)')
+            .eq('id', record.emergency_contact_id)
+            .maybeSingle();
+
+          if (emergencyData?.resident_profile?.unit_id) {
+            const { data: unitData } = await supabase
+              .from('units')
+              .select('unit_number, unit_code')
+              .eq('id', emergencyData.resident_profile.unit_id)
+              .maybeSingle();
+
+            if (unitData) {
+              unitInfo = unitData;
+            }
+          }
+        } else if (record.linked_record_type === 'emergency') {
           const { data: emergencyData } = await supabase
             .from('emergency_contacts')
             .select('resident_profile:resident_profile_id(unit_id)')
