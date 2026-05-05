@@ -3123,7 +3123,7 @@ export async function POST(req) {
               continue;
             }
 
-            // 更新 emergency_incidents 狀態為 submitted（這才是真正的狀態改變）
+            // 更新 emergency_incidents 狀態為 submitted（已完成編輯，提交審核）
             const { error: updateErr } = await supabase
               .from('emergency_incidents')
               .update({
@@ -3135,26 +3135,16 @@ export async function POST(req) {
 
             if (updateErr) throw updateErr;
 
-            // 寫入緊急報告
-            const { data: createdEmergency, error: emergencyInsertError } = await supabase
-              .from('emergency_reports_line')
-              .insert([{
-                reporter_line_user_id: userId,
-                reporter_profile_id: existingProfile?.id || null,
-                event_type: incident.event_type,
-                location: incident.location,
-                description: incident.description || '未提供',
-                image_url: incident.image_url || null,
-                status: 'pending',
-                created_at: nowIso,
-                updated_at: nowIso
-              }])
-              .select('id, event_type, location, description, image_url, status, created_at')
-              .single();
-
-            if (emergencyInsertError || !createdEmergency) {
-              throw emergencyInsertError || new Error('寫入失敗');
-            }
+            // 使用已存在的 incident 記錄作為 createdEmergency
+            const createdEmergency = {
+              id: activeSession.incidentId,
+              event_type: incident.event_type,
+              location: incident.location,
+              description: incident.description || '未提供',
+              image_url: incident.image_url || null,
+              status: 'submitted',
+              created_at: incident.created_at
+            };
 
             // 查詢所有管委會（committee）
             const { data: admins, error: adminQueryError } = await supabase
