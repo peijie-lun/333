@@ -15,7 +15,7 @@ const supabase = createClient(
     }
   }
 );
-import { chat } from '../../../grokmain.js';
+import { chat } from '@/lib/ai-chat';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -849,6 +849,7 @@ export async function POST(req) {
         const facilitySession = facilityBookingSessions.get(userId);
 
         if (facilitySession?.step === 'await_date') {
+          console.log('[分流:設施預約] await_date', { userId, userText, facilityId: facilitySession.facilityId, facilityName: facilitySession.facilityName });
           if (userText === '取消' || userText === '取消預約流程') {
             facilityBookingSessions.delete(userId);
             await safeReplyMessage(replyToken, userId, {
@@ -896,6 +897,7 @@ export async function POST(req) {
         }
 
         if (facilitySession?.step === 'await_time') {
+          console.log('[分流:設施預約] await_time', { userId, userText, facilityId: facilitySession.facilityId, facilityName: facilitySession.facilityName, bookingDate: facilitySession.bookingDate });
           if (userText === '取消' || userText === '取消預約流程') {
             facilityBookingSessions.delete(userId);
             await safeReplyMessage(replyToken, userId, {
@@ -1063,12 +1065,14 @@ export async function POST(req) {
         const isCancelBookingText = userText === '取消預約';
 
         if (isFacilityMenuText) {
+          console.log('[分流:設施預約] 主選單', { userId, userText, cleanText });
           await safeReplyMessage(replyToken, userId, buildFacilityMainMenuFlex());
           usedReplyTokens.add(replyToken);
           continue;
         }
 
         if (isStartBookingText) {
+          console.log('[分流:設施預約] 我要預約', { userId, userText });
           const { data: facilities, error: facilityQueryErr } = await supabase
             .from('facilities')
             .select('id, name, location, capacity, base_price, available')
@@ -1126,6 +1130,7 @@ export async function POST(req) {
         }
 
         if (isMyBookingsText) {
+          console.log('[分流:設施預約] 我的預約', { userId, userText });
           if (!existingProfile?.id) {
             await safeReplyMessage(replyToken, userId, {
               type: 'text',
@@ -1170,6 +1175,7 @@ export async function POST(req) {
         }
 
         if (isCancelBookingText) {
+          console.log('[分流:設施預約] 取消預約', { userId, userText });
           if (!existingProfile?.id) {
             await safeReplyMessage(replyToken, userId, {
               type: 'text',
@@ -1733,6 +1739,7 @@ export async function POST(req) {
         const activeSessionStep = activeSession ? getEmergencyDraftStep(activeSession) : null;
 
         if (activeSession && cleanText !== '回報緊急事件') {
+          console.log('[分流:緊急事件] session', { userId, userText, cleanText, activeSessionStep });
           try {
             if (activeSessionStep === 'event_type') {
               const normalizedEventType = userText
@@ -1858,6 +1865,7 @@ export async function POST(req) {
 
         // 0.4️⃣ 緊急事件送審 - 方案C：引導式 + 快速選項
         if (cleanText === '回報緊急事件') {
+          console.log('[分流:緊急事件] 啟動', { userId, userText, cleanText });
           try {
             // 清除所有舊的 line_session（包含 draft 及已提交的 submitted），防止孤兒 session 造成鬼打牆
             await supabase
@@ -2008,6 +2016,7 @@ export async function POST(req) {
 
         // 0.5️⃣ 查看最新投票
         if (cleanText === '查看最新投票') {
+          console.log('[分流:投票] 查看最新投票', { userId, userText, cleanText });
           try {
             const { data: latestVote, error: voteQueryError } = await supabase
               .from('votes')
@@ -2151,6 +2160,7 @@ export async function POST(req) {
         const isPackageQuery = packageKeywords.some(keyword => normalizedUserText.includes(keyword));
 
         if (isFeeQuery) {
+          console.log('[分流:管理費] 查詢', { userId, userText, normalizedUserText });
           try {
             // 優先使用本次已查到的 profile，必要時補查 unit_id
             let profileForFee = existingProfile;
@@ -2252,6 +2262,7 @@ export async function POST(req) {
         }
 
         if (isPackageQuery) {
+          console.log('[分流:包裹] 查詢', { userId, userText, normalizedUserText });
           try {
             // 優先使用本次已查到的 profile，必要時補查 unit_id
             let profileForPackage = existingProfile;
@@ -2403,6 +2414,7 @@ export async function POST(req) {
             }
           }
           
+          console.log('[AI查詢] 即將進入 LLM', { userId, userText, cleanText, isFeeQuery, isPackageQuery, hasRepairSession: !!currentSession, hasEmergencySession: !!activeSession, hasFacilitySession: !!facilitySession, branch: 'none' });
           const result = await chat(userText);
           
           // ===== 處理追問澄清機制 =====
@@ -3820,6 +3832,7 @@ export async function POST(req) {
             }
 
             // 直接呼叫 chat 函數處理澄清選項
+            console.log('[AI查詢] clarify 即將進入 LLM', { userId, clarifyValue, branch: 'clarify' });
             const result = await chat(clarifyValue);
             
             // 根據結果建立回覆訊息（帶回饋按鈕）
