@@ -2152,17 +2152,19 @@ export async function POST(req) {
           continue;
         }
 
-        // 1.5️⃣ 包裹 / 管理費查詢（依 LINE 使用者綁定單位查詢）
+        // 1.5️⃣ 包裹 / 管理費 / 報修查詢（依 LINE 使用者綁定單位查詢）
         const normalizedUserText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '');
         const feeKeywords = ['管理費', '查詢我的管理費', '查管理費', '我的管理費'];
         const packageKeywords = ['包裹', '查詢我的包裹', '查包裹', '我的包裹', '包裹狀態'];
+        const repairKeywords = ['報修', '查詢報修', '報修狀態', '查看報修'];
         const isFeeQuery = feeKeywords.some(keyword => normalizedUserText.includes(keyword));
         const isPackageQuery = packageKeywords.some(keyword => normalizedUserText.includes(keyword));
+        const isRepairQuery = repairKeywords.some(keyword => normalizedUserText.includes(keyword));
 
         if (isFeeQuery) {
-          console.log('[分流:管理費] 查詢', { userId, userText, normalizedUserText });
+          console.log('[分流:管理費] 查詢選單', { userId, userText, normalizedUserText });
           try {
-            // 優先使用本次已查到的 profile，必要時補查 unit_id
+            // 檢查綁定狀態
             let profileForFee = existingProfile;
 
             if (!profileForFee?.unit_id) {
@@ -2189,71 +2191,85 @@ export async function POST(req) {
               continue;
             }
 
-            const { data: latestFee, error: feeError } = await supabase
-              .from('fees')
-              .select('*')
-              .eq('unit_id', profileForFee.unit_id)
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
+            // 顯示選單卡片
+            const feeMenuFlex = {
+              type: 'flex',
+              altText: '💰 管理費查詢',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '💰 管理費查詢',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: '請選擇要查詢的項目',
+                      color: '#999999',
+                      size: 'sm',
+                      wrap: true
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#E74C3C',
+                      action: {
+                        type: 'postback',
+                        label: '🟡 查看所有未繳',
+                        data: 'action=fee_unpaid',
+                        displayText: '查看所有未繳'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#3498DB',
+                      action: {
+                        type: 'postback',
+                        label: '📋 最新一筆',
+                        data: 'action=fee_latest',
+                        displayText: '查看最新一筆'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#9B59B6',
+                      action: {
+                        type: 'postback',
+                        label: '📊 繳費紀錄',
+                        data: 'action=fee_history',
+                        displayText: '查看繳費紀錄'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
 
-            if (feeError) {
-              throw feeError;
-            }
-
-            if (!latestFee) {
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '💰 目前查不到您的管理費資料。\n若您剛收到通知，請稍後再查詢。'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            const { data: unitData } = await supabase
-              .from('units')
-              .select('unit_number, unit_code')
-              .eq('id', profileForFee.unit_id)
-              .maybeSingle();
-
-            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
-            const amountText = latestFee.amount != null ? `NT$ ${latestFee.amount}` : '未提供';
-
-            const dueDate = latestFee.due ? new Date(latestFee.due) : null;
-            const dueText = dueDate && !Number.isNaN(dueDate.getTime())
-              ? dueDate.toLocaleDateString('zh-TW')
-              : (latestFee.due || '未提供');
-
-            const invoiceText =
-              latestFee.invoice ??
-              latestFee.invoice_number ??
-              latestFee.invoice_no ??
-              latestFee.receipt_no ??
-              '未提供';
-
-            const feeStatusText = latestFee.paid === true
-              ? '✅ 已繳費'
-              : latestFee.paid === false
-                ? '🟡 未繳費'
-                : (latestFee.status ? `ℹ️ ${latestFee.status}` : '未提供');
-
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text:
-                `💰 您最新一筆管理費資訊\n` +
-                `房號：${roomText}\n` +
-                `金額：${amountText}\n` +
-                `到期日：${dueText}\n` +
-                `發票：${invoiceText}\n` +
-                `繳費狀態：${feeStatusText}`
-            });
+            await client.replyMessage(replyToken, feeMenuFlex);
             usedReplyTokens.add(replyToken);
           } catch (feeErr) {
-            console.error('❌ 管理費查詢失敗:', feeErr);
+            console.error('❌ 管理費查詢選單失敗:', feeErr);
             if (!usedReplyTokens.has(replyToken)) {
               await client.replyMessage(replyToken, {
                 type: 'text',
-                text: '❌ 管理費查詢失敗，請稍後再試。'
+                text: '❌ 查詢失敗，請稍後再試。'
               });
               usedReplyTokens.add(replyToken);
             }
@@ -2262,9 +2278,9 @@ export async function POST(req) {
         }
 
         if (isPackageQuery) {
-          console.log('[分流:包裹] 查詢', { userId, userText, normalizedUserText });
+          console.log('[分流:包裹] 查詢選單', { userId, userText, normalizedUserText });
           try {
-            // 優先使用本次已查到的 profile，必要時補查 unit_id
+            // 檢查綁定狀態
             let profileForPackage = existingProfile;
 
             if (!profileForPackage?.unit_id) {
@@ -2291,61 +2307,141 @@ export async function POST(req) {
               continue;
             }
 
-            const { data: latestPackage, error: packageError } = await supabase
-              .from('packages')
-              .select('id, courier, tracking_number, status, arrived_at, created_at, updated_at')
-              .eq('unit_id', profileForPackage.unit_id)
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
-            const { data: unitData } = await supabase
-              .from('units')
-              .select('unit_number, unit_code')
-              .eq('id', profileForPackage.unit_id)
-              .maybeSingle();
-
-            if (packageError) {
-              throw packageError;
-            }
-
-            if (!latestPackage) {
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '📦 目前查不到您的包裹資料。\n若您剛收到通知，請稍後再查詢。'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            const packageStatusMap = {
-              pending: '🟡 未領取（待領取）',
-              picked_up: '✅ 已領取',
+            // 顯示選單卡片
+            const packageMenuFlex = {
+              type: 'flex',
+              altText: '📦 包裹查詢',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '📦 包裹查詢',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: '請選擇要查詢的項目',
+                      color: '#999999',
+                      size: 'sm',
+                      wrap: true
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#E74C3C',
+                      action: {
+                        type: 'postback',
+                        label: '🟡 待領取',
+                        data: 'action=package_pending',
+                        displayText: '查看待領取'
+                      }
+                    }
+                  ]
+                }
+              }
             };
 
-            const statusText = packageStatusMap[latestPackage.status] || `ℹ️ ${latestPackage.status || '未知狀態'}`;
-            const arrivedAtText = latestPackage.arrived_at
-              ? new Date(latestPackage.arrived_at).toLocaleString('zh-TW', { hour12: false })
-              : '未提供';
-            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
-
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text:
-                `📦 您最新一筆包裹狀態\n` +
-                `狀態：${statusText}\n` +
-                `快遞公司：${latestPackage.courier || '未提供'}\n` +
-                `房號：${roomText}\n` +
-                `追蹤號碼：${latestPackage.tracking_number || '未提供'}\n` +
-                `到件時間：${arrivedAtText}`
-            });
+            await client.replyMessage(replyToken, packageMenuFlex);
             usedReplyTokens.add(replyToken);
           } catch (pkgErr) {
-            console.error('❌ 包裹查詢失敗:', pkgErr);
+            console.error('❌ 包裹查詢選單失敗:', pkgErr);
             if (!usedReplyTokens.has(replyToken)) {
               await client.replyMessage(replyToken, {
                 type: 'text',
-                text: '❌ 包裹查詢失敗，請稍後再試。'
+                text: '❌ 查詢失敗，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+            }
+          }
+          continue;
+        }
+
+        if (isRepairQuery) {
+          console.log('[分流:報修] 查詢選單', { userId, userText, normalizedUserText });
+          try {
+            // 顯示選單卡片
+            const repairMenuFlex = {
+              type: 'flex',
+              altText: '🛠 報修',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '🛠 報修',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: '請選擇要執行的操作',
+                      color: '#999999',
+                      size: 'sm',
+                      wrap: true
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#E74C3C',
+                      action: {
+                        type: 'postback',
+                        label: '🛠 我要報修',
+                        data: 'action=repair_start',
+                        displayText: '開始報修'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#3498DB',
+                      action: {
+                        type: 'postback',
+                        label: '📄 查看報修狀態',
+                        data: 'action=repair_status',
+                        displayText: '查看報修狀態'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+
+            await client.replyMessage(replyToken, repairMenuFlex);
+            usedReplyTokens.add(replyToken);
+          } catch (repairErr) {
+            console.error('❌ 報修選單失敗:', repairErr);
+            if (!usedReplyTokens.has(replyToken)) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 查詢失敗，請稍後再試。'
               });
               usedReplyTokens.add(replyToken);
             }
@@ -2362,9 +2458,27 @@ export async function POST(req) {
             continue;
           }
 
-          // 包裹/管理費一律不進 LLM：若前面漏掉，也在這裡再擋一次
-          if (isFeeQuery || isPackageQuery) {
-            console.log('[AI查詢] 偵測到包裹/管理費查詢，跳過 AI 查詢');
+          // 包裹/管理費/報修一律不進 LLM：若前面漏掉，也在這裡再擋一次
+          if (isFeeQuery || isPackageQuery || isRepairQuery) {
+            console.log('[AI查詢] 偵測到包裹/管理費/報修查詢，跳過 AI 查詢');
+            continue;
+          }
+
+          // 投票相關：不進 LLM
+          if (userText.includes('vote:') || cleanText === '查看最新投票') {
+            console.log('[AI查詢] 偵測到投票相關，跳過 AI 查詢');
+            continue;
+          }
+
+          // 緊急事件相關：不進 LLM
+          if (activeSession || cleanText === '回報緊急事件') {
+            console.log('[AI查詢] 偵測到緊急事件相關，跳過 AI 查詢');
+            continue;
+          }
+
+          // 設施預約相關：不進 LLM
+          if (facilitySession || isFacilityMenuText || isStartBookingText || isMyBookingsText || isCancelBookingText) {
+            console.log('[AI查詢] 偵測到設施預約相關，跳過 AI 查詢');
             continue;
           }
           
@@ -3811,7 +3925,743 @@ export async function POST(req) {
             continue;
           }
         }
-        
+
+        // ===== 處理管理費查詢 postback =====
+        if (action === 'fee_latest') {
+          console.log('[分流:管理費] 最新一筆', { userId });
+          try {
+            let profileForFee = existingProfile;
+
+            if (!profileForFee?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForFee = { ...existingProfile, ...profileWithUnit };
+              }
+            }
+
+            if (!profileForFee?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定。'
+              });
+              continue;
+            }
+
+            const { data: latestFee, error: feeError } = await supabase
+              .from('fees')
+              .select('*')
+              .eq('unit_id', profileForFee.unit_id)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (feeError || !latestFee) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '💰 目前查不到您的管理費資料。'
+              });
+              continue;
+            }
+
+            const { data: unitData } = await supabase
+              .from('units')
+              .select('unit_number, unit_code')
+              .eq('id', profileForFee.unit_id)
+              .maybeSingle();
+
+            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
+            const amountText = latestFee.amount != null ? `NT$ ${latestFee.amount}` : '未提供';
+            const dueDate = latestFee.due ? new Date(latestFee.due) : null;
+            const dueText = dueDate && !Number.isNaN(dueDate.getTime())
+              ? dueDate.toLocaleDateString('zh-TW')
+              : (latestFee.due || '未提供');
+            const feeStatusText = latestFee.paid === true
+              ? '✅ 已繳費'
+              : latestFee.paid === false
+                ? '🟡 未繳費'
+                : (latestFee.status ? `ℹ️ ${latestFee.status}` : '未提供');
+            const invoiceText = latestFee.invoice ? latestFee.invoice : '未提供';
+
+            const latestFeeFlex = {
+              type: 'flex',
+              altText: '💰 最新一筆管理費',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '💰 您最新一筆管理費資訊',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'box',
+                      layout: 'vertical',
+                      spacing: 'sm',
+                      contents: [
+                        {
+                          type: 'box',
+                          layout: 'horizontal',
+                          contents: [
+                            { type: 'text', text: '房號', size: 'sm', weight: 'bold', flex: 2 },
+                            { type: 'text', text: roomText, size: 'sm', align: 'end', flex: 3 }
+                          ]
+                        },
+                        {
+                          type: 'box',
+                          layout: 'horizontal',
+                          contents: [
+                            { type: 'text', text: '金額', size: 'sm', weight: 'bold', flex: 2 },
+                            { type: 'text', text: amountText, size: 'sm', align: 'end', flex: 3, color: '#E74C3C' }
+                          ]
+                        },
+                        {
+                          type: 'box',
+                          layout: 'horizontal',
+                          contents: [
+                            { type: 'text', text: '到期日', size: 'sm', weight: 'bold', flex: 2 },
+                            { type: 'text', text: dueText, size: 'sm', align: 'end', flex: 3 }
+                          ]
+                        },
+                        {
+                          type: 'box',
+                          layout: 'horizontal',
+                          contents: [
+                            { type: 'text', text: '繳費狀態', size: 'sm', weight: 'bold', flex: 2 },
+                            { type: 'text', text: feeStatusText, size: 'sm', align: 'end', flex: 3 }
+                          ]
+                        },
+                        {
+                          type: 'box',
+                          layout: 'horizontal',
+                          contents: [
+                            { type: 'text', text: '發票', size: 'sm', weight: 'bold', flex: 2 },
+                            { type: 'text', text: invoiceText, size: 'sm', align: 'end', flex: 3 }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'link',
+                      height: 'sm',
+                      action: {
+                        type: 'uri',
+                        label: '🌐 查看完整繳費紀錄',
+                        uri: 'https://zdx3399.vercel.app/'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+
+            await client.replyMessage(replyToken, latestFeeFlex);
+          } catch (err) {
+            console.error('❌ 最新一筆查詢失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+        if (action === 'fee_history') {
+          console.log('[分流:管理費] 繳費紀錄', { userId });
+          try {
+            let profileForFee = existingProfile;
+
+            if (!profileForFee?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForFee = { ...existingProfile, ...profileWithUnit };
+              }
+            }
+
+            if (!profileForFee?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定。'
+              });
+              continue;
+            }
+
+            // 查詢最近 12 個月 (按 due 日期倒序)
+            const { data: feeHistory, error: feeError } = await supabase
+              .from('fees')
+              .select('*')
+              .eq('unit_id', profileForFee.unit_id)
+              .order('due', { ascending: false })
+              .limit(12);
+
+            if (feeError) {
+              throw feeError;
+            }
+
+            if (!feeHistory || feeHistory.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '💰 目前查不到您的管理費紀錄。'
+              });
+              continue;
+            }
+
+            // 構建繳費紀錄清單文本
+            let historyListText = '';
+            feeHistory.forEach((fee, idx) => {
+              const dueDate = fee.due ? new Date(fee.due) : null;
+              const dueText = dueDate && !Number.isNaN(dueDate.getTime())
+                ? dueDate.toLocaleDateString('zh-TW')
+                : (fee.due || '未提供');
+              const status = fee.paid === true ? '✅ 已繳' : '🟡 未繳';
+              const monthText = fee.due ? new Date(fee.due).toLocaleDateString('zh-TW', { year: '2-digit', month: '2-digit' }).replace(/\//g, '/') : '未提供';
+              historyListText += `${idx + 1}. ${monthText}  NT$ ${fee.amount}  ${status}\n`;
+            });
+
+            const historyFlex = {
+              type: 'flex',
+              altText: '📊 繳費紀錄',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '📊 繳費紀錄（最近 12 個月）',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: historyListText.trim(),
+                      size: 'sm',
+                      wrap: true,
+                      color: '#333333'
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'link',
+                      height: 'sm',
+                      action: {
+                        type: 'uri',
+                        label: '🌐 查看更多歷史',
+                        uri: 'https://zdx3399.vercel.app/'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+
+            await client.replyMessage(replyToken, historyFlex);
+          } catch (err) {
+            console.error('❌ 繳費紀錄查詢失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+        if (action === 'fee_unpaid') {
+          console.log('[分流:管理費] 所有未繳', { userId });
+          try {
+            let profileForFee = existingProfile;
+
+            if (!profileForFee?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForFee = { ...existingProfile, ...profileWithUnit };
+              }
+            }
+
+            if (!profileForFee?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定。'
+              });
+              continue;
+            }
+
+            const { data: unpaidFees, error: feeError } = await supabase
+              .from('fees')
+              .select('*')
+              .eq('unit_id', profileForFee.unit_id)
+              .eq('paid', false)
+              .order('due', { ascending: true });
+
+            if (feeError) {
+              throw feeError;
+            }
+
+            // 沒有未繳費的情況
+            if (!unpaidFees || unpaidFees.length === 0) {
+              const noUnpaidFlex = {
+                type: 'flex',
+                altText: '✅ 未繳費查詢',
+                contents: {
+                  type: 'bubble',
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    spacing: 'md',
+                    contents: [
+                      {
+                        type: 'text',
+                        text: '✅ 您目前沒有未繳管理費',
+                        weight: 'bold',
+                        size: 'lg',
+                        wrap: true,
+                        color: '#10B981'
+                      },
+                      { type: 'separator', margin: 'md' },
+                      {
+                        type: 'text',
+                        text: '感謝您的配合！',
+                        size: 'sm',
+                        color: '#666666',
+                        wrap: true
+                      }
+                    ]
+                  },
+                  footer: {
+                    type: 'box',
+                    layout: 'vertical',
+                    spacing: 'sm',
+                    contents: [
+                      {
+                        type: 'button',
+                        style: 'link',
+                        height: 'sm',
+                        action: {
+                          type: 'uri',
+                          label: '🌐 查看完整繳費紀錄',
+                          uri: 'https://zdx3399.vercel.app/'
+                        }
+                      }
+                    ]
+                  }
+                }
+              };
+
+              await client.replyMessage(replyToken, noUnpaidFlex);
+              continue;
+            }
+
+            // 有未繳費的情況
+            const totalAmount = unpaidFees.reduce((sum, fee) => sum + (fee.amount || 0), 0);
+
+            // 構建未繳費清單文本
+            let unpaidListText = '';
+            unpaidFees.forEach((fee, idx) => {
+              const dueDate = fee.due ? new Date(fee.due) : null;
+              const dueText = dueDate && !Number.isNaN(dueDate.getTime())
+                ? dueDate.toLocaleDateString('zh-TW')
+                : (fee.due || '未提供');
+              const monthText = fee.due ? new Date(fee.due).toLocaleDateString('zh-TW', { year: '2-digit', month: '2-digit' }).replace(/\//g, '/') : '未提供';
+              unpaidListText += `${String.fromCharCode(9312 + idx)} ${monthText}  NT$ ${fee.amount}  到期日：${dueText}\n`;
+            });
+
+            const unpaidFlex = {
+              type: 'flex',
+              altText: '🟡 未繳費查詢',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: `💰 您有 ${unpaidFees.length} 筆未繳管理費`,
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: unpaidListText.trim(),
+                      size: 'sm',
+                      wrap: true,
+                      color: '#333333'
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'box',
+                      layout: 'horizontal',
+                      spacing: 'md',
+                      contents: [
+                        {
+                          type: 'text',
+                          text: '合計：',
+                          size: 'sm',
+                          weight: 'bold',
+                          flex: 0
+                        },
+                        {
+                          type: 'text',
+                          text: `NT$ ${totalAmount}`,
+                          size: 'sm',
+                          weight: 'bold',
+                          align: 'end',
+                          color: '#E74C3C'
+                        }
+                      ]
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#3498DB',
+                      action: {
+                        type: 'postback',
+                        label: '📄 查看最新一筆',
+                        data: 'action=fee_latest',
+                        displayText: '查看最新一筆'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'link',
+                      height: 'sm',
+                      action: {
+                        type: 'uri',
+                        label: '🌐 查看完整繳費紀錄',
+                        uri: 'https://zdx3399.vercel.app/'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+
+            await client.replyMessage(replyToken, unpaidFlex);
+          } catch (err) {
+            console.error('❌ 未繳費查詢失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+        if (action === 'fee_all') {
+          console.log('[分流:管理費] 全部記錄', { userId });
+          try {
+            let profileForFee = existingProfile;
+
+            if (!profileForFee?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForFee = { ...existingProfile, ...profileWithUnit };
+              }
+            }
+
+            if (!profileForFee?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定。'
+              });
+              continue;
+            }
+
+            const { data: allFees, error: feeError } = await supabase
+              .from('fees')
+              .select('*')
+              .eq('unit_id', profileForFee.unit_id)
+              .order('created_at', { ascending: false })
+              .limit(10);
+
+            if (feeError) {
+              throw feeError;
+            }
+
+            if (!allFees || allFees.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '💰 目前查不到您的管理費資料。'
+              });
+              continue;
+            }
+
+            const { data: unitData } = await supabase
+              .from('units')
+              .select('unit_number, unit_code')
+              .eq('id', profileForFee.unit_id)
+              .maybeSingle();
+
+            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
+
+            let allText = `📊 管理費記錄（最近 10 筆）\n房號：${roomText}\n\n`;
+            
+            allFees.forEach((fee, idx) => {
+              const dueDate = fee.due ? new Date(fee.due) : null;
+              const dueText = dueDate && !Number.isNaN(dueDate.getTime())
+                ? dueDate.toLocaleDateString('zh-TW')
+                : (fee.due || '未提供');
+              const status = fee.paid === true ? '✅ 已繳' : '🟡 未繳';
+              allText += `${idx + 1}. NT$ ${fee.amount} - ${dueText} ${status}\n`;
+            });
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: allText
+            });
+          } catch (err) {
+            console.error('❌ 全部記錄查詢失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+        if (action === 'repair_start') {
+          console.log('[分流:報修] 啟動報修流程', { userId });
+          // 直接啟動報修流程（同「報修」指令）
+          const oldSession = repairSessions.get(userId);
+          if (oldSession) {
+            console.log('[報修] 偵測到舊 session，將被覆蓋:', oldSession);
+          }
+          
+          await closeMaintenanceDraft(userId, 'rejected');
+          await supabase
+            .from('emergency_incidents')
+            .update({ status: 'rejected', updated_at: new Date().toISOString() })
+            .eq('source', 'line_session')
+            .eq('reporter_line_user_id', userId)
+            .eq('status', 'draft');
+          
+          repairSessions.set(userId, {
+            location: null,
+            description: null,
+            startTime: Date.now(),
+            dbId: null
+          });
+
+          try {
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '📍 請輸入地點'
+            });
+            usedReplyTokens.add(replyToken);
+          } catch (replyErr) {
+            console.error('[報修] ❌ 啟動流程失敗:', replyErr.message);
+          }
+          continue;
+        }
+
+        if (action === 'repair_status') {
+          console.log('[分流:報修] 查看報修狀態', { userId });
+          try {
+            if (!existingProfile?.id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定，暫時無法查詢報修狀態。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            const { data: repairs, error } = await supabase
+              .from('maintenance')
+              .select('id, status, created_at, equipment, item, description')
+              .eq('reported_by_id', existingProfile.id)
+              .in('status', ['open', 'progress', 'closed'])
+              .order('created_at', { ascending: false })
+              .limit(5);
+
+            if (error || !repairs || repairs.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '📋 您目前沒有報修記錄\n\n輸入「報修」可以開始新的報修'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            const statusEmoji = {
+              open: '🟡 待處理',
+              progress: '🔵 處理中',
+              closed: '✅ 已完成'
+            };
+
+            let recordsText = '📋 您的報修狀態（最近5筆）\n\n';
+            repairs.forEach((repair, index) => {
+              const date = new Date(repair.created_at).toLocaleString('zh-TW', { 
+                month: '2-digit', 
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+              recordsText += `${index + 1}. 編號 #${String(repair.id).slice(0, 8)}\n`;
+              recordsText += `   ${statusEmoji[repair.status] || repair.status}\n`;
+              recordsText += `   ${repair.equipment || '未提供地點'}\n`;
+              recordsText += `   ${(repair.item || '一般報修')} - ${(repair.description || '未提供描述')}\n`;
+              recordsText += `   ${date}\n\n`;
+            });
+
+            recordsText += '💡 輸入「報修」可開始新的報修';
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: recordsText
+            });
+            usedReplyTokens.add(replyToken);
+          } catch (err) {
+            console.error('[報修] 查詢狀態失敗:', err);
+            if (!usedReplyTokens.has(replyToken)) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 查詢失敗，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+            }
+          }
+          continue;
+        }
+
+        if (action === 'package_pending') {
+          console.log('[分流:包裹] 待領取', { userId });
+          try {
+            let profileForPackage = existingProfile;
+
+            if (!profileForPackage?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForPackage = { ...existingProfile, ...profileWithUnit };
+              }
+            }
+
+            if (!profileForPackage?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定。'
+              });
+              continue;
+            }
+
+            const { data: pendingPackages, error: pkgError } = await supabase
+              .from('packages')
+              .select('id, courier, tracking_number, arrived_at')
+              .eq('unit_id', profileForPackage.unit_id)
+              .eq('status', 'pending')
+              .order('arrived_at', { ascending: false });
+
+            if (pkgError) {
+              throw pkgError;
+            }
+
+            if (!pendingPackages || pendingPackages.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '✅ 您目前沒有待領取的包裹，感謝您的配合！'
+              });
+              continue;
+            }
+
+            const { data: unitData } = await supabase
+              .from('units')
+              .select('unit_number, unit_code')
+              .eq('id', profileForPackage.unit_id)
+              .maybeSingle();
+
+            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
+
+            let pendingText = `🟡 待領取包裹（共 ${pendingPackages.length} 筆）\n`;
+            pendingText += `房號：${roomText}\n\n`;
+            
+            pendingPackages.forEach((pkg, idx) => {
+              const arrivedDate = pkg.arrived_at ? new Date(pkg.arrived_at) : null;
+              const arrivedText = arrivedDate && !Number.isNaN(arrivedDate.getTime())
+                ? arrivedDate.toLocaleString('zh-TW', { hour12: false })
+                : (pkg.arrived_at || '未提供');
+              pendingText += `${idx + 1}. 快遞：${pkg.courier || '未提供'}\n`;
+              pendingText += `   到件時間：${arrivedText}\n`;
+              if (pkg.tracking_number) {
+                pendingText += `   追蹤號：${pkg.tracking_number}\n`;
+              }
+            });
+
+            pendingText += '\n📦 請儘早至管理室領取，謝謝！';
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: pendingText
+            });
+          } catch (err) {
+            console.error('❌ 待領取包裹查詢失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+
         // ===== 處理澄清選項 =====
         if (action === 'clarify') {
           const clarifyValue = params.get('value');
