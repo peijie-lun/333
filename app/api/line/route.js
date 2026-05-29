@@ -4819,10 +4819,11 @@ export async function POST(req) {
               if (vote.description) {
                 votesText += `   說明：${vote.description}\n`;
               }
+              if (vote.vote_url) {
+                votesText += `   投票連結：${vote.vote_url}\n`;
+              }
               votesText += '\n';
             });
-
-            votesText += '💡 請點擊投票連結進行投票';
 
             await client.replyMessage(replyToken, {
               type: 'text',
