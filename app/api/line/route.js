@@ -4530,8 +4530,6 @@ export async function POST(req) {
               recordsText += `   ${date}\n\n`;
             });
 
-            recordsText += '💡 輸入「報修」可開始新的報修';
-
             await client.replyMessage(replyToken, {
               type: 'text',
               text: recordsText
