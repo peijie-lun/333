@@ -15,7 +15,7 @@ const supabase = createClient(
     }
   }
 );
-import { chat } from '../../../grokmain.js';
+import { chat } from '@/lib/ai-chat';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
