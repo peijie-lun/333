@@ -1363,54 +1363,7 @@ export async function POST(req) {
           continue;
         }
         
-        // 啟動報修流程（最優先處理，避免被舊 session 干擾）
-        if (userText === '報修' || userText === '我要報修' || userText === '新報修') {
-          console.log('[報修] ==================== 啟動新報修流程 ====================');
-          
-          // 清除舊的 session（如果有）
-          const oldSession = repairSessions.get(userId);
-          if (oldSession) {
-            console.log('[報修] 偵測到舊 session，將被覆蓋:', oldSession);
-          }
-          
-          // 清除舊的 DB 草稿（報修）
-          await closeMaintenanceDraft(userId, 'rejected');
 
-          // 清除舊的緊急事件 draft（避免舊 line_session 攔截圖片）
-          await supabase
-            .from('emergency_incidents')
-            .update({ status: 'rejected', updated_at: new Date().toISOString() })
-            .eq('source', 'line_session')
-            .eq('reporter_line_user_id', userId)
-            .eq('status', 'draft');
-          
-          // 初始化新的報修 session (只在內存中，不創建空 DB 記錄)
-          repairSessions.set(userId, {
-            location: null,
-            description: null,
-            startTime: Date.now(),
-            dbId: null
-          });
-
-          console.log('[報修] 新 session 已建立');
-
-          try {
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: '📍 請輸入地點'
-            });
-            usedReplyTokens.add(replyToken); // 標記為已使用
-            console.log('[報修] ✅ 啟動流程: 訊息回覆成功');
-          } catch (replyErr) {
-            console.error('[報修] ❌ 啟動流程: 訊息回覆失敗:', replyErr.message);
-            console.error('[報修] 錯誤詳情:', {
-              status: replyErr.response?.status,
-              statusText: replyErr.response?.statusText,
-              data: replyErr.response?.data
-            });
-          }
-          continue;
-        }
         
         // 檢查用戶是否在報修流程中
         let currentSession = repairSessions.get(userId);
@@ -2161,7 +2114,7 @@ export async function POST(req) {
         const normalizedUserText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '');
         const feeKeywords = ['管理費', '查詢我的管理費', '查管理費', '我的管理費'];
         const packageKeywords = ['包裹', '查詢我的包裹', '查包裹', '我的包裹', '包裹狀態'];
-        const repairKeywords = ['報修', '查詢報修', '報修狀態', '查看報修'];
+        const repairKeywords = ['報修', '查詢報修', '報修狀態', '查看報修', '我要報修'];
         const voteKeywords = ['查看最新投票', '查詢投票', '投票查詢', '最新投票'];
         const isFeeQuery = feeKeywords.some(keyword => normalizedUserText.includes(keyword));
         const isPackageQuery = packageKeywords.some(keyword => normalizedUserText.includes(keyword));
