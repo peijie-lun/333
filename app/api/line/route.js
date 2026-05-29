@@ -2080,6 +2080,7 @@ export async function POST(req) {
 
             await client.replyMessage(replyToken, voteMenuFlex);
             usedReplyTokens.add(replyToken);
+            console.log('✅ [投票防護] 菜單已回覆，即將執行 continue 跳過 LLM');
           } catch (err) {
             console.error('❌ 投票菜單失敗:', err);
             if (!usedReplyTokens.has(replyToken)) {
@@ -2090,6 +2091,7 @@ export async function POST(req) {
               usedReplyTokens.add(replyToken);
             }
           }
+          console.log('✅ [投票防護] 執行 continue，防護成功 ✓✓✓');
           continue;
         }
 
@@ -2465,12 +2467,21 @@ export async function POST(req) {
 
           // 包裹/管理費/報修/投票一律不進 LLM：若前面漏掉，也在這裡再擋一次
           if (isFeeQuery || isPackageQuery || isRepairQuery || isVoteQuery) {
-            console.log('[AI查詢] 偵測到包裹/管理費/報修/投票查詢，跳過 AI 查詢');
+            console.log('\n✅ [二次防護] 🛡️ 系統功能二次攔截成功');
+            console.log('✅ [二次防護] 特性檢測:', {
+              管理費: isFeeQuery,
+              包裹: isPackageQuery,
+              報修: isRepairQuery,
+              投票: isVoteQuery
+            });
+            console.log('✅ [二次防護] 執行 continue，防護成功 ✓✓✓');
             continue;
           }
 
           // 投票相關：不進 LLM
           if (userText.includes('vote:') || cleanText === '查看最新投票') {
+            console.log('✅ [二次防護] 投票查詢二次攔截');
+            continue;
             console.log('[AI查詢] 偵測到投票相關，跳過 AI 查詢');
             continue;
           }
@@ -2515,6 +2526,7 @@ export async function POST(req) {
 
           // LINE webhook event 的唯一 ID（有些版本欄位名稱不同）
           const eventId = event.webhookEventId || event.id || `${userId}_${Date.now()}`;
+          console.log('\n🔴 [LLM標記] ⚠️ 進入 LLM 查詢邏輯');
           console.log('[DEBUG] Event ID:', eventId);
           console.log('[DEBUG] Event 完整資料:', JSON.stringify(event, null, 2));
           
@@ -2533,8 +2545,10 @@ export async function POST(req) {
             }
           }
           
-          console.log('[AI查詢] 即將進入 LLM', { userId, userText, cleanText, isFeeQuery, isPackageQuery, hasRepairSession: !!currentSession, hasEmergencySession: !!activeSession, hasFacilitySession: !!facilitySession, branch: 'none' });
+          console.log('\n🔴 [LLM執行] ⚠️⚠️⚠️ 即將進入 LLM 查詢');
+          console.log('🔴 [LLM執行] 參數:', { userId, userText, cleanText, isFeeQuery, isPackageQuery, hasRepairSession: !!currentSession, hasEmergencySession: !!activeSession, hasFacilitySession: !!facilitySession });
           const result = await chat(userText);
+          console.log('🔴 [LLM執行] LLM 回應完成');
           
           // ===== 處理追問澄清機制 =====
           if (result.needsClarification) {
@@ -4668,6 +4682,7 @@ export async function POST(req) {
 
         // ===== 投票查詢：最新一筆 =====
         if (action === 'vote_latest') {
+          console.log('\n✅ [投票防護] Postback 進入 vote_latest 分支');
           console.log('[分流:投票] 查看最新一筆', { userId });
           try {
             const { data: latestVote, error: voteQueryError } = await supabase
@@ -4738,6 +4753,7 @@ export async function POST(req) {
               type: 'text',
               text: voteMessage
             });
+            console.log('✅ [投票防護] 回覆已送出，即將執行 continue 防護');
           } catch (err) {
             console.error('❌ 查詢最新投票失敗:', err);
             await client.replyMessage(replyToken, {
@@ -4745,11 +4761,13 @@ export async function POST(req) {
               text: '❌ 查詢失敗，請稍後再試。'
             });
           }
+          console.log('✅ [投票防護] vote_latest 完成，執行 continue ✓✓✓');
           continue;
         }
 
         // ===== 投票查詢：期限內未投的 =====
         if (action === 'vote_not_voted') {
+          console.log('\n✅ [投票防護] Postback 進入 vote_not_voted 分支');
           console.log('[分流:投票] 查看期限內未投的', { userId });
           try {
             if (!existingProfile?.id) {
@@ -4829,6 +4847,7 @@ export async function POST(req) {
               type: 'text',
               text: votesText
             });
+            console.log('✅ [投票防護] 回覆已送出，即將執行 continue 防護');
           } catch (err) {
             console.error('❌ 查詢未投票列表失敗:', err);
             await client.replyMessage(replyToken, {
@@ -4836,6 +4855,7 @@ export async function POST(req) {
               text: '❌ 查詢失敗，請稍後再試。'
             });
           }
+          console.log('✅ [投票防護] vote_not_voted 完成，執行 continue ✓✓✓');
           continue;
         }
 
