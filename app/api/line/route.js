@@ -2014,75 +2014,78 @@ export async function POST(req) {
         }
 
 
-        // 0.5️⃣ 查看最新投票
+        // 0.5️⃣ 查看最新投票 - 顯示菜單
         if (cleanText === '查看最新投票') {
-          console.log('[分流:投票] 查看最新投票', { userId, userText, cleanText });
+          console.log('[分流:投票] 查看最新投票菜單', { userId, userText, cleanText });
           try {
-            const { data: latestVote, error: voteQueryError } = await supabase
-              .from('votes')
-              .select('id, title, description, vote_url, created_at, ends_at, status')
-              .eq('status', 'active')
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
-            if (voteQueryError) {
-              console.error('❌ 查詢最新投票失敗:', voteQueryError);
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '❌ 查詢最新投票失敗，請稍後再試。'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            if (!latestVote) {
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '📭 目前沒有進行中的投票。'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            let optionsText = '未提供';
-            if (Array.isArray(latestVote.options) && latestVote.options.length > 0) {
-              optionsText = latestVote.options.join('、');
-            } else if (typeof latestVote.options === 'string' && latestVote.options.trim()) {
-              optionsText = latestVote.options;
-            }
-
-            const createdAtText = latestVote.created_at
-              ? new Date(latestVote.created_at).toLocaleString('zh-TW', { hour12: false })
-              : '未提供';
-            const endsAtText = latestVote.ends_at
-              ? new Date(latestVote.ends_at).toLocaleString('zh-TW', { hour12: false })
-              : '未設定';
-            const statusMap = {
-              active: '🟢 進行中',
-              closed: '⚪ 已結束'
+            // 顯示選單卡片
+            const voteMenuFlex = {
+              type: 'flex',
+              altText: '🗳️ 投票查詢',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '🗳️ 投票查詢',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: '請選擇要查詢的項目',
+                      color: '#999999',
+                      size: 'sm',
+                      wrap: true
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#3498DB',
+                      action: {
+                        type: 'postback',
+                        label: '🗳️ 最新一筆',
+                        data: 'action=vote_latest',
+                        displayText: '查看最新一筆投票'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#9B59B6',
+                      action: {
+                        type: 'postback',
+                        label: '📝 期限內未投的',
+                        data: 'action=vote_not_voted',
+                        displayText: '查看期限內未投的投票'
+                      }
+                    }
+                  ]
+                }
+              }
             };
-            const statusText = statusMap[latestVote.status] || latestVote.status || '未知';
 
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text:
-                `🗳️ 最新投票資訊\n` +
-                `標題：${latestVote.title || '未提供'}\n` +
-                `狀態：${statusText}\n` +
-                `選項：${optionsText}\n` +
-                `建立時間：${createdAtText}\n` +
-                `截止時間：${endsAtText}\n` +
-                `說明：${latestVote.description || '無'}` +
-                (latestVote.vote_url ? `\n投票連結：${latestVote.vote_url}` : '')
-            });
+            await client.replyMessage(replyToken, voteMenuFlex);
             usedReplyTokens.add(replyToken);
           } catch (err) {
-            console.error('❌ 最新投票查詢例外:', err);
+            console.error('❌ 投票菜單失敗:', err);
             if (!usedReplyTokens.has(replyToken)) {
               await client.replyMessage(replyToken, {
                 type: 'text',
-                text: '❌ 查詢最新投票失敗，請稍後再試。'
+                text: '❌ 查詢失敗，請稍後再試。'
               });
               usedReplyTokens.add(replyToken);
             }
@@ -2152,14 +2155,16 @@ export async function POST(req) {
           continue;
         }
 
-        // 1.5️⃣ 包裹 / 管理費 / 報修查詢（依 LINE 使用者綁定單位查詢）
+        // 1.5️⃣ 包裹 / 管理費 / 報修 / 投票查詢（依 LINE 使用者綁定單位查詢）
         const normalizedUserText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '');
         const feeKeywords = ['管理費', '查詢我的管理費', '查管理費', '我的管理費'];
         const packageKeywords = ['包裹', '查詢我的包裹', '查包裹', '我的包裹', '包裹狀態'];
         const repairKeywords = ['報修', '查詢報修', '報修狀態', '查看報修'];
+        const voteKeywords = ['查看最新投票', '查詢投票', '投票查詢', '最新投票'];
         const isFeeQuery = feeKeywords.some(keyword => normalizedUserText.includes(keyword));
         const isPackageQuery = packageKeywords.some(keyword => normalizedUserText.includes(keyword));
         const isRepairQuery = repairKeywords.some(keyword => normalizedUserText.includes(keyword));
+        const isVoteQuery = voteKeywords.some(keyword => normalizedUserText.includes(keyword));
 
         if (isFeeQuery) {
           console.log('[分流:管理費] 查詢選單', { userId, userText, normalizedUserText });
@@ -2458,9 +2463,9 @@ export async function POST(req) {
             continue;
           }
 
-          // 包裹/管理費/報修一律不進 LLM：若前面漏掉，也在這裡再擋一次
-          if (isFeeQuery || isPackageQuery || isRepairQuery) {
-            console.log('[AI查詢] 偵測到包裹/管理費/報修查詢，跳過 AI 查詢');
+          // 包裹/管理費/報修/投票一律不進 LLM：若前面漏掉，也在這裡再擋一次
+          if (isFeeQuery || isPackageQuery || isRepairQuery || isVoteQuery) {
+            console.log('[AI查詢] 偵測到包裹/管理費/報修/投票查詢，跳過 AI 查詢');
             continue;
           }
 
@@ -4653,6 +4658,178 @@ export async function POST(req) {
             });
           } catch (err) {
             console.error('❌ 待領取包裹查詢失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+        // ===== 投票查詢：最新一筆 =====
+        if (action === 'vote_latest') {
+          console.log('[分流:投票] 查看最新一筆', { userId });
+          try {
+            const { data: latestVote, error: voteQueryError } = await supabase
+              .from('votes')
+              .select('id, title, description, vote_url, created_at, ends_at, status, options')
+              .eq('status', 'active')
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (voteQueryError) {
+              console.error('❌ 查詢最新投票失敗:', voteQueryError);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 查詢最新投票失敗，請稍後再試。'
+              });
+              continue;
+            }
+
+            if (!latestVote) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '📭 目前沒有進行中的投票。'
+              });
+              continue;
+            }
+
+            // 檢查用戶是否已投票
+            const { data: userVoteRecord } = await supabase
+              .from('vote_records')
+              .select('id')
+              .eq('vote_id', latestVote.id)
+              .eq('user_id', existingProfile?.id)
+              .maybeSingle();
+
+            const hasVoted = !!userVoteRecord;
+
+            let optionsText = '未提供';
+            if (Array.isArray(latestVote.options) && latestVote.options.length > 0) {
+              optionsText = latestVote.options.join('、');
+            } else if (typeof latestVote.options === 'string' && latestVote.options.trim()) {
+              optionsText = latestVote.options;
+            }
+
+            const createdAtText = latestVote.created_at
+              ? new Date(latestVote.created_at).toLocaleString('zh-TW', { hour12: false })
+              : '未提供';
+            const endsAtText = latestVote.ends_at
+              ? new Date(latestVote.ends_at).toLocaleString('zh-TW', { hour12: false })
+              : '未設定';
+
+            const statusEmoji = hasVoted ? '✅ 已投票' : '🗳️ 未投票';
+
+            let voteMessage = `${statusEmoji} 最新投票\n\n`;
+            voteMessage += `標題：${latestVote.title || '未提供'}\n`;
+            voteMessage += `狀態：🟢 進行中\n`;
+            voteMessage += `選項：${optionsText}\n`;
+            voteMessage += `建立時間：${createdAtText}\n`;
+            voteMessage += `截止時間：${endsAtText}\n`;
+            if (latestVote.description) {
+              voteMessage += `說明：${latestVote.description}\n`;
+            }
+            if (latestVote.vote_url) {
+              voteMessage += `\n投票連結：${latestVote.vote_url}`;
+            }
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: voteMessage
+            });
+          } catch (err) {
+            console.error('❌ 查詢最新投票失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+        // ===== 投票查詢：期限內未投的 =====
+        if (action === 'vote_not_voted') {
+          console.log('[分流:投票] 查看期限內未投的', { userId });
+          try {
+            if (!existingProfile?.id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定，暫時無法查詢投票狀態。\n請先完成 LINE 帳號綁定後再試一次。'
+              });
+              continue;
+            }
+
+            // 查詢所有進行中且未過期的投票
+            const now = new Date().toISOString();
+            const { data: activeVotes, error: votesQueryError } = await supabase
+              .from('votes')
+              .select('id, title, description, vote_url, created_at, ends_at, status, options')
+              .eq('status', 'active')
+              .gt('ends_at', now)
+              .order('ends_at', { ascending: true })
+              .limit(10);
+
+            if (votesQueryError) {
+              console.error('❌ 查詢投票列表失敗:', votesQueryError);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 查詢投票列表失敗，請稍後再試。'
+              });
+              continue;
+            }
+
+            if (!activeVotes || activeVotes.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '📭 目前沒有進行中的投票。'
+              });
+              continue;
+            }
+
+            // 檢查用戶已投過的投票
+            const { data: userVoteRecords } = await supabase
+              .from('vote_records')
+              .select('vote_id')
+              .eq('user_id', existingProfile.id);
+
+            const votedVoteIds = new Set(userVoteRecords?.map(r => r.vote_id) || []);
+
+            // 篩選出未投的投票
+            const notVotedVotes = activeVotes.filter(v => !votedVoteIds.has(v.id));
+
+            if (notVotedVotes.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '✅ 您已投過所有期限內的投票，感謝參與！'
+              });
+              continue;
+            }
+
+            let votesText = `📝 期限內未投的投票（共 ${notVotedVotes.length} 筆）\n\n`;
+
+            notVotedVotes.forEach((vote, idx) => {
+              const endsAt = vote.ends_at ? new Date(vote.ends_at) : null;
+              const endsAtText = endsAt && !Number.isNaN(endsAt.getTime())
+                ? endsAt.toLocaleString('zh-TW', { hour12: false })
+                : (vote.ends_at || '未設定');
+
+              votesText += `${idx + 1}. ${vote.title || '未提供'}\n`;
+              votesText += `   截止：${endsAtText}\n`;
+              if (vote.description) {
+                votesText += `   說明：${vote.description}\n`;
+              }
+              votesText += '\n';
+            });
+
+            votesText += '💡 請點擊投票連結進行投票';
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: votesText
+            });
+          } catch (err) {
+            console.error('❌ 查詢未投票列表失敗:', err);
             await client.replyMessage(replyToken, {
               type: 'text',
               text: '❌ 查詢失敗，請稍後再試。'
