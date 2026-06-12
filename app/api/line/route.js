@@ -2122,7 +2122,20 @@ export async function POST(req) {
           '查詢我的管理費',
           '管理費查詢'
         ];
-        const feeQuestionPatterns = ['怎麼計算', '如何計算', '怎麼算', '計算方式', '收費標準', '標準', '規則', '包含', '為什麼'];
+        const feeQuestionPatterns = [
+          '怎麼計算',
+          '如何計算',
+          '怎麼算',
+          '計算方式',
+          '標準',
+          '規則',
+          '包含',
+          '為什麼',
+          '是什麼',
+          '什麼是',
+          '介紹',
+          '說明'
+        ];
         const isFeeQuestion = normalizedUserText.includes('管理費') && feeQuestionPatterns.some(kw => normalizedUserText.includes(kw));
         const isFeeQuery = feeMenuCommands.includes(normalizedUserText) && !isFeeQuestion;
         
