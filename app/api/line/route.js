@@ -2110,16 +2110,61 @@ export async function POST(req) {
           continue;
         }
 
-        // 1.5️⃣ 包裹 / 管理費 / 報修 / 投票查詢（依 LINE 使用者綁定單位查詢）
+        // 1.5️⃣ 智能分流：區分「操作型指令」和「問答型問題」
+        // 操作指令 → 觸發功能選單；問答 → 進入 chatbot/KMS
         const normalizedUserText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '');
-        const feeKeywords = ['管理費', '查詢我的管理費', '查管理費', '我的管理費'];
-        const packageKeywords = ['包裹', '查詢我的包裹', '查包裹', '我的包裹', '包裹狀態'];
-        const repairKeywords = ['報修', '查詢報修', '報修狀態', '查看報修', '我要報修'];
-        const voteKeywords = ['查看最新投票', '查詢投票', '投票查詢', '最新投票'];
-        const isFeeQuery = feeKeywords.some(keyword => normalizedUserText.includes(keyword));
-        const isPackageQuery = packageKeywords.some(keyword => normalizedUserText.includes(keyword));
-        const isRepairQuery = repairKeywords.some(keyword => normalizedUserText.includes(keyword));
-        const isVoteQuery = voteKeywords.some(keyword => normalizedUserText.includes(keyword));
+        
+        // 🎯 管理費：操作指令 vs 問答
+        const feeMenuCommands = [
+          '管理費',
+          '查管理費',
+          '我的管理費',
+          '查詢我的管理費',
+          '管理費查詢'
+        ];
+        const feeQuestionPatterns = ['怎麼計算', '如何計算', '怎麼算', '計算方式', '收費標準', '標準', '規則', '包含', '為什麼'];
+        const isFeeQuestion = normalizedUserText.includes('管理費') && feeQuestionPatterns.some(kw => normalizedUserText.includes(kw));
+        const isFeeQuery = feeMenuCommands.includes(normalizedUserText) && !isFeeQuestion;
+        
+        // 🎯 包裹：操作指令 vs 問答
+        const packageMenuCommands = [
+          '包裹',
+          '查包裹',
+          '我的包裹',
+          '查詢我的包裹',
+          '查詢包裹',
+          '包裹查詢'
+        ];
+        const packageQuestionPatterns = ['怎麼', '如何', '多久', '什麼時候', '為什麼', '規則', '政策'];
+        const isPackageQuestion = normalizedUserText.includes('包裹') && packageQuestionPatterns.some(kw => normalizedUserText.includes(kw));
+        const isPackageQuery = packageMenuCommands.includes(normalizedUserText) && !isPackageQuestion;
+        
+        // 🎯 報修：操作指令 vs 問答
+        const repairMenuCommands = [
+          '我要報修',
+          '報修',
+          '查詢報修',
+          '查報修狀態',
+          '報修狀態',
+          '查看報修狀態',
+          '我的報修',
+          '報修記錄'
+        ];
+        const repairQuestionPatterns = ['怎麼', '如何', '流程', '步驟', '多久', '會費', '收費', '為什麼'];
+        const isRepairQuestion = normalizedUserText.includes('報修') && repairQuestionPatterns.some(kw => normalizedUserText.includes(kw));
+        const isRepairQuery = repairMenuCommands.includes(normalizedUserText) && !isRepairQuestion;
+        
+        // 🎯 投票：操作指令 vs 問答
+        const voteMenuCommands = [
+          '查看最新投票',
+          '最新投票',
+          '查詢投票',
+          '投票查詢',
+          '投票'
+        ];
+        const voteQuestionPatterns = ['怎麼投票', '如何投票', '規則', '期限', '為什麼'];
+        const isVoteQuestion = normalizedUserText.includes('投票') && voteQuestionPatterns.some(kw => normalizedUserText.includes(kw));
+        const isVoteQuery = voteMenuCommands.includes(normalizedUserText) && !isVoteQuestion;
 
         if (isFeeQuery) {
           console.log('[分流:管理費] 查詢選單', { userId, userText, normalizedUserText });
@@ -2411,69 +2456,26 @@ export async function POST(req) {
 
         // 2️⃣ 其他問題 → 直接呼叫 chat 函數進行 AI 查詢
         try {
-          // 再次檢查是否為系統提示訊息（雙重防護）
-          // 先檢查 emoji
+          // 檢查是否為系統提示訊息（忽略）
           if (userText.includes('📍') || userText.includes('🛠') || userText.includes('📷')) {
             console.log('[AI查詢] 偵測到報修提示 emoji，跳過 AI 查詢');
             continue;
           }
 
-          // 包裹/管理費/報修/投票一律不進 LLM：若前面漏掉，也在這裡再擋一次
-          if (isFeeQuery || isPackageQuery || isRepairQuery || isVoteQuery) {
-            console.log('\n✅ [二次防護] 🛡️ 系統功能二次攔截成功');
-            console.log('✅ [二次防護] 特性檢測:', {
-              管理費: isFeeQuery,
-              包裹: isPackageQuery,
-              報修: isRepairQuery,
-              投票: isVoteQuery
-            });
-            console.log('✅ [二次防護] 執行 continue，防護成功 ✓✓✓');
-            continue;
-          }
-
-          // 投票相關：不進 LLM
+          // 投票相關訊息：不進 LLM
           if (userText.includes('vote:') || cleanText === '查看最新投票') {
-            console.log('✅ [二次防護] 投票查詢二次攔截');
-            continue;
             console.log('[AI查詢] 偵測到投票相關，跳過 AI 查詢');
             continue;
           }
 
-          // 緊急事件相關：不進 LLM
+          // 進行中的會話：不進 LLM
           if (activeSession || cleanText === '回報緊急事件') {
             console.log('[AI查詢] 偵測到緊急事件相關，跳過 AI 查詢');
             continue;
           }
 
-          // 設施預約相關：不進 LLM
           if (facilitySession || isFacilityMenuText || isStartBookingText || isMyBookingsText || isCancelBookingText) {
             console.log('[AI查詢] 偵測到設施預約相關，跳過 AI 查詢');
-            continue;
-          }
-          
-          const checkText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
-          const blockKeywords = [
-            '請上傳照片', 
-            '上傳照片並輸入', 
-            '地點與問題說明', 
-            '請輸入您想查詢',
-            '上傳照片',
-            // 投票相關：避免把投票查詢送到 LLM
-            '投票',
-            '投票查詢',
-            '投票結果',
-            '查詢投票',
-            'vote',
-            'poll'
-          ];
-          
-          const shouldBlock = blockKeywords.some(keyword => {
-            const cleanKeyword = keyword.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
-            return checkText.includes(cleanKeyword);
-          });
-          
-          if (shouldBlock) {
-            console.log('[AI查詢] 偵測到系統提示訊息，跳過 AI 查詢');
             continue;
           }
 
