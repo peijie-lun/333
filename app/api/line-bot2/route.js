@@ -3,9 +3,10 @@ import { createClient } from '@supabase/supabase-js';
 import { fileTypeFromBuffer } from 'file-type';
 import heicConvert from 'heic-convert';
 
-const supabaseServerKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+const supabaseServerKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || 'dummy_key';
+const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
 const supabase = createClient(
-  process.env.SUPABASE_URL,
+  supabaseUrl,
   supabaseServerKey,
   {
     auth: {
@@ -15,21 +16,54 @@ const supabase = createClient(
   }
 );
 import { chat } from '../../../grokmain.js';
-import 'dotenv/config';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // Vercel Pro: 最長 60 秒；Hobby 方案上限仍為 10 秒
 const BOT_TAG = 'BOT2';
 
 const lineConfig = {
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN_BOT2 || 'dummy-access-token',
+  channelSecret: process.env.LINE_CHANNEL_SECRET_BOT2 || 'dummy-channel-secret',
+};
+
+const testLineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN_BOT2,
   channelSecret: process.env.LINE_CHANNEL_SECRET_BOT2,
 };
+
+const isTestConfigReady = Boolean(
+  testLineConfig.channelAccessToken && testLineConfig.channelSecret
+);
+
+const testClient = isTestConfigReady
+  ? new Client(testLineConfig)
+  : null;
+
+function getNotificationChannelMode() {
+  const mode = (process.env.LINE_BOT_NOTIFICATION_MODE || 'official').toLowerCase();
+  return mode === 'test' ? 'test' : 'official';
+}
+
+function getNotificationClient() {
+  const mode = getNotificationChannelMode();
+
+  if (mode === 'test' && testClient) {
+    return { mode, lineClient: testClient };
+  }
+
+  if (mode === 'test' && !testClient) {
+    console.warn(`[${BOT_TAG}] ⚠️ LINE_BOT_NOTIFICATION_MODE=test，但 BOT2 設定不完整，改用正式通道`);
+  }
+
+  return { mode: 'official', lineClient: client };
+}
 
 const client = new Client(lineConfig);// LINE Bot SDK 客戶端
 const emergencyImageBucket = process.env.SUPABASE_EMERGENCY_IMAGE_BUCKET || 'emergency_images';
 const maintenanceImageBucket = process.env.SUPABASE_MAINTENANCE_IMAGE_BUCKET || 'maintenance_images';
 
-if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+if (process.env.NEXT_PHASE !== 'phase-production-build' && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.warn('⚠️ 未設定 SUPABASE_SERVICE_ROLE_KEY，Storage 上傳可能因權限被拒。');
 }
 
@@ -144,7 +178,7 @@ async function uploadMaintenanceImageFromLineMessage(messageId, userId) {
     .from(maintenanceImageBucket)
     .upload(filePath, normalizedImage.buffer, {
       contentType: normalizedImage.contentType,
-      upsert: false
+      upsert: true
     });
 
   if (uploadError) {
@@ -192,20 +226,6 @@ async function safeReplyMessage(replyToken, userId, message) {
   }
 }
 
-async function tryGetLineProfile(userId) {
-  try {
-    return await client.getProfile(userId);
-  } catch (err) {
-    const statusCode = err?.statusCode || err?.originalError?.status;
-    if (statusCode === 404) {
-      console.warn('⚠️ LINE profile 404，略過 profile 取得，改用 userId。', { userId });
-      return null;
-    }
-    console.warn('⚠️ 無法抓到 profile，只存 userId。', err);
-    return null;
-  }
-}
-
 /**
  * 🚨 推播緊急通知給住户的聯繫人
  * 當 IoT 設備或其他系統觸發緊急事件時使用此函數
@@ -216,12 +236,13 @@ async function tryGetLineProfile(userId) {
  */
 async function notifyEmergencyContact(operatorProfileId, eventContext = 'IoT 緊急事件') {
   try {
+    const { mode, lineClient: notificationClient } = getNotificationClient();
+    console.log(`[${BOT_TAG}] [緊急通知] 目前通知通道: ${mode === 'test' ? '測試 BOT2' : '正式'}`);
     console.log(`🚨 [緊急通知] 準備推播給聯繫人，操作人員 ID: ${operatorProfileId}`);
 
-    // 查詢住户信息和緊急聯繫人
     const { data: operatorProfile, error: profileError } = await supabase
       .from('profiles')
-      .select('id, name, unit_id, emergency_contact_name, emergency_contact_phone, emergency_contact_line_user_id')
+      .select('id, name, unit_id')
       .eq('id', operatorProfileId)
       .maybeSingle();
 
@@ -230,12 +251,25 @@ async function notifyEmergencyContact(operatorProfileId, eventContext = 'IoT 緊
       return { success: false, message: '無法查詢住户信息' };
     }
 
-    // 檢查是否有緊急聯繫人的 LINE user ID
-    if (!operatorProfile.emergency_contact_line_user_id) {
-      console.warn('[緊急通知] ⚠️ 住户未設定緊急聯繫人的 LINE user ID');
-      return { 
-        success: false, 
-        message: '住户未設定緊急聯繫人的 LINE user ID'
+    const { data: emergencyContact, error: emergencyContactError } = await supabase
+      .from('emergency_contacts')
+      .select('contact_name, contact_phone, contact_line_user_id, verify_status')
+      .eq('resident_profile_id', operatorProfileId)
+      .eq('verify_status', 'verified')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (emergencyContactError) {
+      console.error('[緊急通知] ❌ 無法查詢緊急聯絡人:', emergencyContactError);
+      return { success: false, message: '無法查詢緊急聯絡人資料' };
+    }
+
+    if (!emergencyContact?.contact_line_user_id) {
+      console.warn('[緊急通知] ⚠️ 住户未設定已驗證的緊急聯絡人 LINE user ID');
+      return {
+        success: false,
+        message: '住户未設定已驗證的緊急聯絡人 LINE user ID'
       };
     }
 
@@ -260,20 +294,20 @@ async function notifyEmergencyContact(operatorProfileId, eventContext = 'IoT 緊
             `事件類型：${eventContext}\n` +
             `住户姓名：${operatorProfile.name || '未提供'}\n` +
             `房號：${roomInfo}\n` +
-            `聯繫電話：${operatorProfile.emergency_contact_phone || '未提供'}\n` +
+            `聯繫電話：${emergencyContact.contact_phone || '未提供'}\n` +
             `事件時間：${new Date().toLocaleString('zh-TW', { hour12: false })}\n\n` +
             `⚠️ 請立即採取行動！`
     };
 
     // 發送消息給緊急聯繫人
-    await client.pushMessage(operatorProfile.emergency_contact_line_user_id, emergencyMessage);
+    await notificationClient.pushMessage(emergencyContact.contact_line_user_id, emergencyMessage);
 
-    console.log(`🚨 [緊急通知] ✅ 已發送給 ${operatorProfile.emergency_contact_name}`);
+    console.log(`🚨 [緊急通知] ✅ 已發送給 ${emergencyContact.contact_name || '未命名聯絡人'}`);
     
     return { 
       success: true, 
       message: '緊急通知已發送',
-      contactName: operatorProfile.emergency_contact_name
+      contactName: emergencyContact.contact_name
     };
 
   } catch (err) {
@@ -385,6 +419,13 @@ function buildEmergencyConfirmFlex(sessionId, eventType, location, description, 
   };
 }
 
+function getEmergencyDraftStep(incident) {
+  if (!incident?.event_type) return 'event_type';
+  if (!incident.location) return 'location';
+  if (!incident.description) return 'description';
+  return 'confirm';
+}
+
 function buildFacilityMainMenuFlex() {
   return {
     type: 'flex',
@@ -464,15 +505,13 @@ const repairSessions = new Map();
 // 記憶體暫存設施預約流程狀態
 const facilityBookingSessions = new Map();
 
-// 記憶體暫存緊急事件會話狀態（替代 emergency_sessions view）
-const emergencySessions = new Map();
-
 // 追蹤已使用的 replyToken（防止重複處理）
 const usedReplyTokens = new Set();
 
 // 追蹤已處理的 webhook event（防止 LINE redelivery 造成重複訊息）
 const processedWebhookEvents = new Map();
 const WEBHOOK_EVENT_TTL_MS = 10 * 60 * 1000; // 10 分鐘
+const MAINTENANCE_SESSION_SOURCE = 'line_maintenance_session';
 
 function cleanupProcessedWebhookEvents(now = Date.now()) {
   for (const [eventId, ts] of processedWebhookEvents.entries()) {
@@ -482,12 +521,101 @@ function cleanupProcessedWebhookEvents(now = Date.now()) {
   }
 }
 
+async function getActiveMaintenanceDraft(userId) {
+  const { data, error } = await supabase
+    .from('emergency_incidents')
+    .select('id, location, description, updated_at')
+    .eq('source', MAINTENANCE_SESSION_SOURCE)
+    .eq('reporter_line_user_id', userId)
+    .eq('status', 'draft')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[報修] 查詢資料庫草稿失敗:', error);
+    return null;
+  }
+
+  if (data) {
+    console.log('[報修] DB草稿查詢結果:', {
+      id: data.id,
+      hasLocation: !!data.location,
+      location: data.location,
+      hasDescription: !!data.description,
+      description: data.description
+    });
+  }
+
+  return data || null;
+}
+
+async function upsertMaintenanceDraft(userId, patch = {}) {
+  const currentDraft = await getActiveMaintenanceDraft(userId);
+
+  if (currentDraft?.id) {
+    const { error } = await supabase
+      .from('emergency_incidents')
+      .update({
+        ...patch,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', currentDraft.id)
+      .eq('source', MAINTENANCE_SESSION_SOURCE)
+      .eq('status', 'draft');
+
+    if (error) {
+      console.error('[報修] 更新資料庫草稿失敗:', error);
+    }
+    return currentDraft?.id || null;
+  }
+
+  const { data, error } = await supabase
+    .from('emergency_incidents')
+    .insert([{
+      source: MAINTENANCE_SESSION_SOURCE,
+      reporter_line_user_id: userId,
+      status: 'draft',
+      event_type: 'maintenance',
+      location: patch.location || null,
+      description: patch.description || null,
+      updated_at: new Date().toISOString()
+    }])
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    console.error('[報修] 建立資料庫草稿失敗 (詳細):', JSON.stringify(error));
+    console.error('[報修] 可能原因：emergency_incidents.source CHECK constraint 不允許 line_maintenance_session');
+    console.error('[報修] 請執行 scripts/fix-emergency-incidents-source-constraint.sql 修正資料庫約束');
+    return null;
+  }
+
+  return data?.id || null;
+}
+
+async function closeMaintenanceDraft(userId, status = 'submitted') {
+  const { error } = await supabase
+    .from('emergency_incidents')
+    .update({
+      status,
+      updated_at: new Date().toISOString()
+    })
+    .eq('source', MAINTENANCE_SESSION_SOURCE)
+    .eq('reporter_line_user_id', userId)
+    .eq('status', 'draft');
+
+  if (error) {
+    console.error('[報修] 關閉資料庫草稿失敗:', error);
+  }
+}
+
 // 移除圖片關鍵字攔截，讓所有查詢都進入 AI 處理
 // const IMAGE_KEYWORDS = ['圖片', '設施', '游泳池', '健身房', '大廳'];
 // 處理 LINE Webhook 請求
 export async function POST(req) {
   const requestId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-  console.log(`\n========== [${BOT_TAG}] [${requestId}] 新的 Webhook 請求 ==========`);
+  console.log(`\n========== [${requestId}] 新的 Webhook 請求 ==========`);
   
   try {
     const rawBody = await req.text();// 取得原始請求體
@@ -500,7 +628,7 @@ export async function POST(req) {
     console.log('[Debug] Body length:', rawBody.length);
     
     if (!signature) {
-      console.error(`[${BOT_TAG}] [Signature Error] No signature header`);
+      console.error('[Signature Error] No signature header');
       return new Response('Unauthorized', { status: 401 });
     }
     
@@ -508,7 +636,7 @@ export async function POST(req) {
     console.log('[Debug] Signature valid:', isValid);
     
     if (!isValid) {
-      console.error(`[${BOT_TAG}] [Signature Error] Invalid signature`);
+      console.error('[Signature Error] Invalid signature');
       return new Response('Unauthorized', { status: 401 });
     }
 
@@ -551,9 +679,13 @@ export async function POST(req) {
         continue;
       }
 
-      // 嘗試抓 LINE Profile，但失敗不影響後續流程
-      const fetchedProfile = await tryGetLineProfile(userId);
-      let profile = fetchedProfile || { displayName: '', pictureUrl: '', statusMessage: '' };
+      // 嘗試抓 LINE Profile
+      let profile = { displayName: '', pictureUrl: '', statusMessage: '' };
+      try {
+        profile = await client.getProfile(userId);// 抓取使用者個人資料
+      } catch (err) {
+        console.warn('⚠️ 無法抓到 profile，只存 userId。', err);
+      }
 
       // --- 1. 檢查使用者是否已存在 profiles ---
       const { data: existingProfile, error: checkError } = await supabase
@@ -574,104 +706,39 @@ export async function POST(req) {
 
       // follow 事件或 profile 變動才 upsert
       if (event.type === 'follow' || profileChanged) {
-        const upsertProfile = {
-          line_user_id: userId,
-          line_display_name: profile.displayName || '',
-          line_avatar_url: profile.pictureUrl || '',
-          line_status_message: profile.statusMessage || '',
-          updated_at: new Date().toISOString(),
-        };
-        if (existingProfile?.id) upsertProfile.id = existingProfile.id;
-        const { error: upsertError } = await supabase.from('profiles').upsert([
-          upsertProfile
-        ], { onConflict: 'line_user_id' });
+        if (existingProfile?.id) {
+          // 既有帳號僅同步 LINE 欄位，禁止覆蓋 email/password
+          const { error: updateError } = await supabase
+            .from('profiles')
+            .update({
+              line_user_id: userId,
+              line_display_name: profile.displayName || '',
+              line_avatar_url: profile.pictureUrl || '',
+              line_status_message: profile.statusMessage || '',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existingProfile.id);
 
-        if (upsertError) console.error('❌ Supabase upsert 錯誤:', upsertError);
-      }
-
-      // --- 2. 處理緊急聯絡人綁定 ---    
-      if (event.type === 'message' && event.message.type === 'text') {
-        const userText = event.message.text.trim();
-        const normalizedPhone = userText.replace(/[^0-9]/g, '');
-        const replyToken = event.replyToken;
-        
-        // 🚨 檢查是否是緊急聯絡人綁定（手機號碼格式）
-        const phoneRegex = /^[0-9]{10}$/; // 台灣手機號碼（10位）
-        if (phoneRegex.test(normalizedPhone)) {
-          console.log('🚨 [緊急聯絡人] 檢測到手機號碼:', normalizedPhone);
-          try {
-            // 根據手機號碼查詢 emergency_contacts
-            const { data: emergencyContact, error: queryError } = await supabase
-              .from('emergency_contacts')
-              .select('id, contact_name, contact_phone, contact_line_user_id')
-              .eq('contact_phone', normalizedPhone)
-              .or('contact_line_user_id.is.null,contact_line_user_id.eq.""') // 只查詢未綁定的
-              .maybeSingle();
-
-            if (queryError) {
-              console.error('❌ [緊急聯絡人] 查詢失敗:', queryError);
-              await safeReplyMessage(replyToken, userId, {
-                type: 'text',
-                text: '❌ 查詢失敗，請稍後再試'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
+          if (updateError) console.error('❌ Supabase profile update 錯誤:', updateError);
+        } else {
+          // 只有不存在 profile 才建立 LINE-only 帳號
+          const { error: insertError } = await supabase.from('profiles').insert([
+            {
+              line_user_id: userId,
+              line_display_name: profile.displayName || '',
+              line_avatar_url: profile.pictureUrl || '',
+              line_status_message: profile.statusMessage || '',
+              email: userId + '@line.local',
+              password: userId,
+              updated_at: new Date().toISOString(),
             }
+          ]);
 
-            if (!emergencyContact) {
-              console.warn('⚠️ [緊急聯絡人] 未找到相應的緊急聯絡人');
-              await safeReplyMessage(replyToken, userId, {
-                type: 'text',
-                text: '⚠️ 未找到相應的緊急聯絡人記錄，或此手機號碼已綁定'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            // 更新 emergency_contacts，綁定 LINE ID
-            const { error: updateError } = await supabase
-              .from('emergency_contacts')
-              .update({
-                contact_line_user_id: userId,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', emergencyContact.id);
-
-            if (updateError) {
-              console.error('❌ [緊急聯絡人] 綁定失敗:', updateError);
-              await safeReplyMessage(replyToken, userId, {
-                type: 'text',
-                text: '❌ 綁定失敗，請稍後再試'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            console.log('✅ [緊急聯絡人] 綁定成功:', {
-              emergency_contact_id: emergencyContact.id,
-              contact_name: emergencyContact.contact_name,
-              line_user_id: userId
-            });
-
-            await safeReplyMessage(replyToken, userId, {
-              type: 'text',
-              text: `✅ 緊急聯絡人綁定成功！\n\n姓名: ${emergencyContact.contact_name}\n手機: ${emergencyContact.contact_phone}\n\n您現在將接收來自該住戶的緊急事件通知。`
-            });
-            usedReplyTokens.add(replyToken);
-            continue;
-          } catch (err) {
-            console.error('❌ [緊急聯絡人] 處理錯誤:', err);
-            await safeReplyMessage(replyToken, userId, {
-              type: 'text',
-              text: '❌ 處理過程中發生錯誤，請稍後再試'
-            });
-            usedReplyTokens.add(replyToken);
-            continue;
-          }
+          if (insertError) console.error('❌ Supabase profile insert 錯誤:', insertError);
         }
       }
 
-      // --- 3. 處理文字訊息 ---
+      // --- 2. 處理文字訊息 ---
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text.trim();
         const replyToken = event.replyToken;
@@ -724,10 +791,65 @@ export async function POST(req) {
           continue;
         }
 
+        // --- 2. 處理緊急聯絡人綁定 ---
+        if (event.type === 'message' && event.message.type === 'text') {
+          const normalizedPhone = userText.replace(/[^0-9]/g, '');
+          const phoneRegex = /^[0-9]{10}$/;
+          if (phoneRegex.test(normalizedPhone)) {
+            console.log('🚨 [緊急聯絡人] 檢測到手機號碼:', normalizedPhone);
+            try {
+              const { data: emergencyContact, error: queryError } = await supabase
+                .from('emergency_contacts')
+                .select('id, contact_name, contact_phone, contact_line_user_id')
+                .eq('contact_phone', normalizedPhone)
+                .or('contact_line_user_id.is.null,contact_line_user_id.eq.""')
+                .maybeSingle();
+
+              if (queryError) {
+                console.error('❌ [緊急聯絡人] 查詢失敗:', queryError);
+                await safeReplyMessage(replyToken, userId, { type: 'text', text: '❌ 查詢失敗，請稍後再試。' });
+                usedReplyTokens.add(replyToken);
+                continue;
+              }
+
+              if (!emergencyContact) {
+                await safeReplyMessage(replyToken, userId, { type: 'text', text: '❌ 找不到對應的緊急聯絡人記錄，請確認手機號碼是否正確。' });
+                usedReplyTokens.add(replyToken);
+                continue;
+              }
+
+              const { error: updateError } = await supabase
+                .from('emergency_contacts')
+                .update({ contact_line_user_id: userId, updated_at: new Date().toISOString() })
+                .eq('id', emergencyContact.id);
+
+              if (updateError) {
+                console.error('❌ [緊急聯絡人] 更新失敗:', updateError);
+                await safeReplyMessage(replyToken, userId, { type: 'text', text: '❌ 綁定失敗，請稍後再試。' });
+                usedReplyTokens.add(replyToken);
+                continue;
+              }
+
+              await safeReplyMessage(replyToken, userId, {
+                type: 'text',
+                text: `✅ 緊急聯絡人綁定成功！\n\n您的 LINE 帳號已與以下緊急聯絡人帳號綁定：\n👤 姓名：${emergencyContact.contact_name || '未提供'}\n📞 電話：${emergencyContact.contact_phone}\n\n當住戶發生緊急狀況時，您將收到通知。`
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            } catch (err) {
+              console.error('❌ [緊急聯絡人] 綁定異常:', err);
+              await safeReplyMessage(replyToken, userId, { type: 'text', text: '❌ 系統錯誤，請稍後再試。' });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+          }
+        }
+
         // ===== 設施預約流程（MVP） =====
         const facilitySession = facilityBookingSessions.get(userId);
 
         if (facilitySession?.step === 'await_date') {
+          console.log('[分流:設施預約] await_date', { userId, userText, facilityId: facilitySession.facilityId, facilityName: facilitySession.facilityName });
           if (userText === '取消' || userText === '取消預約流程') {
             facilityBookingSessions.delete(userId);
             await safeReplyMessage(replyToken, userId, {
@@ -775,6 +897,7 @@ export async function POST(req) {
         }
 
         if (facilitySession?.step === 'await_time') {
+          console.log('[分流:設施預約] await_time', { userId, userText, facilityId: facilitySession.facilityId, facilityName: facilitySession.facilityName, bookingDate: facilitySession.bookingDate });
           if (userText === '取消' || userText === '取消預約流程') {
             facilityBookingSessions.delete(userId);
             await safeReplyMessage(replyToken, userId, {
@@ -822,7 +945,9 @@ export async function POST(req) {
           }
 
           const bookingPoints = Number(facilityInfo.base_price || 0);
-          const currentPoints = Number(existingProfile?.points_balance || 0);
+          const currentPoints = existingProfile?.points_balance == null
+            ? 100
+            : Math.max(0, Number(existingProfile.points_balance));
 
           if (currentPoints < bookingPoints) {
             facilityBookingSessions.delete(userId);
@@ -901,14 +1026,6 @@ export async function POST(req) {
             .maybeSingle();
 
           if (bookingErr || !createdBooking) {
-            console.error('[Booking Error] bookingErr:', bookingErr, 'createdBooking:', createdBooking, {
-              facilityId: facilitySession.facilityId,
-              bookingDate: facilitySession.bookingDate,
-              start: timeRange.start,
-              end: timeRange.end,
-              userId: existingProfile?.id
-            });
-
             await supabase
               .from('profiles')
               .update({
@@ -920,7 +1037,7 @@ export async function POST(req) {
             facilityBookingSessions.delete(userId);
             await safeReplyMessage(replyToken, userId, {
               type: 'text',
-              text: '預約失敗，請稍後再試（已記錄錯誤）'
+              text: '預約失敗，請稍後再試。'
             });
             usedReplyTokens.add(replyToken);
             continue;
@@ -948,12 +1065,14 @@ export async function POST(req) {
         const isCancelBookingText = userText === '取消預約';
 
         if (isFacilityMenuText) {
+          console.log('[分流:設施預約] 主選單', { userId, userText, cleanText });
           await safeReplyMessage(replyToken, userId, buildFacilityMainMenuFlex());
           usedReplyTokens.add(replyToken);
           continue;
         }
 
         if (isStartBookingText) {
+          console.log('[分流:設施預約] 我要預約', { userId, userText });
           const { data: facilities, error: facilityQueryErr } = await supabase
             .from('facilities')
             .select('id, name, location, capacity, base_price, available')
@@ -1011,6 +1130,7 @@ export async function POST(req) {
         }
 
         if (isMyBookingsText) {
+          console.log('[分流:設施預約] 我的預約', { userId, userText });
           if (!existingProfile?.id) {
             await safeReplyMessage(replyToken, userId, {
               type: 'text',
@@ -1055,6 +1175,7 @@ export async function POST(req) {
         }
 
         if (isCancelBookingText) {
+          console.log('[分流:設施預約] 取消預約', { userId, userText });
           if (!existingProfile?.id) {
             await safeReplyMessage(replyToken, userId, {
               type: 'text',
@@ -1209,52 +1330,64 @@ export async function POST(req) {
         }
 
         // 🔧 報修系統
-        
-        // 啟動報修流程（最優先處理，避免被舊 session 干擾）
-        if (userText === '報修' || userText === '我要報修' || userText === '新報修') {
-          console.log('[報修] ==================== 啟動新報修流程 ====================');
-          
-          // 清除舊的 session（如果有）
-          const oldSession = repairSessions.get(userId);
-          if (oldSession) {
-            console.log('[報修] 偵測到舊 session，將被覆蓋:', oldSession);
-          }
-          
-          // 初始化新的報修 session
-          repairSessions.set(userId, {
-            location: null,
-            description: null,
-            startTime: Date.now()
-          });
 
-          console.log('[報修] 新 session 已建立');
+        // ===== DEBUG 指令（測試用，可正式上線後移除）=====
+        if (userText === '報修debug' || userText === '報修Debug') {
+          const memSession = repairSessions.get(userId);
+          const dbDraft = await getActiveMaintenanceDraft(userId);
 
-          try {
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text: '📍 請輸入地點'
-            });
-            usedReplyTokens.add(replyToken); // 標記為已使用
-            console.log('[報修] ✅ 啟動流程: 訊息回覆成功');
-          } catch (replyErr) {
-            console.error('[報修] ❌ 啟動流程: 訊息回覆失敗:', replyErr.message);
-            console.error('[報修] 錯誤詳情:', {
-              status: replyErr.response?.status,
-              statusText: replyErr.response?.statusText,
-              data: replyErr.response?.data
-            });
-          }
+          // 查所有 emergency_incidents draft 
+          const { data: allDrafts } = await supabase
+            .from('emergency_incidents')
+            .select('id, source, status, event_type, location, description, updated_at')
+            .eq('reporter_line_user_id', userId)
+            .eq('status', 'draft')
+            .order('updated_at', { ascending: false })
+            .limit(5);
+
+          const lines = [
+            '🔍 [DEBUG] 報修 Session 狀態',
+            '',
+            `📦 Memory session: ${memSession ? JSON.stringify(memSession) : 'null'}`,
+            '',
+            `🗄️ DB 草稿 (${MAINTENANCE_SESSION_SOURCE}): ${dbDraft ? `id=${dbDraft.id}, loc=${dbDraft.location}, desc=${dbDraft.description}` : 'null'}`,
+            '',
+            `📋 所有 draft 記錄 (共 ${allDrafts?.length ?? 0} 筆):`,
+            ...(allDrafts ?? []).map((d, i) =>
+              `  ${i+1}. id=${d.id.slice(0,8)} source=${d.source} loc=${d.location ?? '-'} desc=${d.description ?? '-'} updated=${d.updated_at?.slice(11,19)}`
+            )
+          ];
+
+          await client.replyMessage(replyToken, { type: 'text', text: lines.join('\n') });
+          usedReplyTokens.add(replyToken);
           continue;
         }
         
+
+        
         // 檢查用戶是否在報修流程中
-        const currentSession = repairSessions.get(userId);
+        let currentSession = repairSessions.get(userId);
+        if (!currentSession) {
+          const dbDraft = await getActiveMaintenanceDraft(userId);
+          if (dbDraft) {
+            currentSession = {
+              location: dbDraft.location,
+              description: dbDraft.description,
+              startTime: Date.now()
+            };
+            repairSessions.set(userId, currentSession);
+            console.log('[報修] 使用資料庫草稿恢復 session:', { id: dbDraft.id, location: dbDraft.location, description: dbDraft.description });
+          } else {
+            console.log('[報修] DB草稿查詢結果為空，不恢復 session');
+          }
+        }
         
         console.log('[報修] Session 狀態:', { 
           userId, 
           hasSession: !!currentSession,
           location: currentSession?.location,
-          description: currentSession?.description
+          description: currentSession?.description,
+          isComplete: !!(currentSession?.location && currentSession?.description)
         });
 
         // 查詢我的報修記錄（必須完全匹配，避免與「我要報修」衝突）
@@ -1339,6 +1472,7 @@ export async function POST(req) {
           // 取消報修
           if (userText === '取消報修' || userText === '取消') {
             repairSessions.delete(userId);
+            await closeMaintenanceDraft(userId, 'rejected');
             
             await client.replyMessage(replyToken, {
               type: 'text',
@@ -1350,10 +1484,17 @@ export async function POST(req) {
           // 步驟1: 輸入地點
           if (!currentSession.location) {
             console.log('[報修] 步驟1: 儲存地點:', userText);
-            repairSessions.set(userId, {
+            const updatedSession = {
               ...currentSession,
               location: userText
-            });
+            };
+            repairSessions.set(userId, updatedSession);
+            
+            // 第一次輸入地點時創建 DB 草稿
+            const dbId = await upsertMaintenanceDraft(userId, { location: userText });
+            updatedSession.dbId = dbId;
+            repairSessions.set(userId, updatedSession);
+            console.log('[報修] DB草稿已創建或更新，ID:', dbId);
 
             console.log('[報修] 地點已儲存到 session');
 
@@ -1374,10 +1515,13 @@ export async function POST(req) {
           if (currentSession.location && !currentSession.description) {
             console.log('[報修] 步驟2: 儲存描述:', userText);
             console.log('[報修] 當前地點:', currentSession.location);
-            repairSessions.set(userId, {
+            const updatedSession = {
               ...currentSession,
               description: userText
-            });
+            };
+            repairSessions.set(userId, updatedSession);
+            await upsertMaintenanceDraft(userId, { location: currentSession.location, description: userText });
+            console.log('[報修] 描述已儲存到 session 和 DB');
 
             console.log('[報修] 描述已儲存到 session');
 
@@ -1434,6 +1578,7 @@ export async function POST(req) {
             
             // 清除 session
             repairSessions.delete(userId);
+            await closeMaintenanceDraft(userId, 'submitted');
             
             const repair = completedRepair;
             await client.replyMessage(replyToken, {
@@ -1527,13 +1672,29 @@ export async function POST(req) {
           continue;
         }
 
-        // ===== 檢查是否有進行中的緊急事件會話 =====
-        const activeSession = emergencySessions.get(userId);
+        // ===== 檢查是否有進行中的緊急事件會話（6小時 TTL，防止廢棄 draft 永遠卡住用戶） =====
+        const emergencySessionTTL = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+        const { data: activeSession, error: sessionCheckErr } = await supabase
+          .from('emergency_incidents')
+          .select('id, event_type, location, description, status, image_url')
+          .eq('source', 'line_session')
+          .eq('reporter_line_user_id', userId)
+          .eq('status', 'draft')
+          .gte('updated_at', emergencySessionTTL)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (sessionCheckErr) {
+          console.error('❌ 查詢緊急事件會話失敗:', sessionCheckErr);
+        }
+
+        const activeSessionStep = activeSession ? getEmergencyDraftStep(activeSession) : null;
 
         if (activeSession && cleanText !== '回報緊急事件') {
+          console.log('[分流:緊急事件] session', { userId, userText, cleanText, activeSessionStep });
           try {
-            // 在會話中：根據當前狀態，保存對應資訊
-            if (activeSession.status === 'event_type') {
+            if (activeSessionStep === 'event_type') {
               const normalizedEventType = userText
                 .replace(/^選擇[:：]\s*/, '')
                 .trim();
@@ -1547,24 +1708,18 @@ export async function POST(req) {
                 continue;
               }
 
-              // 使用者輸入自訂事件類型 - 更新 emergency_incidents（只改 event_type）
+              // 使用者輸入自訂事件類型
               const { error: updateErr } = await supabase
                 .from('emergency_incidents')
                 .update({
                   event_type: normalizedEventType,
                   updated_at: new Date().toISOString()
                 })
-                .eq('id', activeSession.incidentId)
+                .eq('id', activeSession.id)
+                .eq('source', 'line_session')
                 .eq('status', 'draft');
 
               if (updateErr) throw updateErr;
-
-              // 更新內存狀態
-              emergencySessions.set(userId, {
-                ...activeSession,
-                status: 'location',
-                event_type: normalizedEventType
-              });
 
               await client.replyMessage(replyToken, {
                 type: 'text',
@@ -1574,7 +1729,7 @@ export async function POST(req) {
               continue;
             }
 
-            if (activeSession.status === 'location') {
+            if (activeSessionStep === 'location') {
               // 使用者輸入地點
               const { error: updateErr } = await supabase
                 .from('emergency_incidents')
@@ -1582,17 +1737,11 @@ export async function POST(req) {
                   location: userText,
                   updated_at: new Date().toISOString()
                 })
-                .eq('id', activeSession.incidentId)
+                .eq('id', activeSession.id)
+                .eq('source', 'line_session')
                 .eq('status', 'draft');
 
               if (updateErr) throw updateErr;
-
-              // 更新內存狀態
-              emergencySessions.set(userId, {
-                ...activeSession,
-                status: 'description',
-                location: userText
-              });
 
               await client.replyMessage(replyToken, {
                 type: 'text',
@@ -1602,7 +1751,7 @@ export async function POST(req) {
               continue;
             }
 
-            if (activeSession.status === 'description') {
+            if (activeSessionStep === 'description') {
               const normalizedDescription = userText.trim();
 
               if (!normalizedDescription) {
@@ -1620,17 +1769,11 @@ export async function POST(req) {
                   description: normalizedDescription,
                   updated_at: new Date().toISOString()
                 })
-                .eq('id', activeSession.incidentId)
+                .eq('id', activeSession.id)
+                .eq('source', 'line_session')
                 .eq('status', 'draft');
 
               if (saveDescErr) throw saveDescErr;
-
-              // 更新內存狀態
-              emergencySessions.set(userId, {
-                ...activeSession,
-                status: 'confirm',
-                description: normalizedDescription
-              });
 
               await client.replyMessage(replyToken, {
                 type: 'text',
@@ -1640,10 +1783,10 @@ export async function POST(req) {
               continue;
             }
 
-            if (activeSession.status === 'confirm') {
+            if (activeSessionStep === 'confirm') {
               if (userText === '略過' || userText === '跳過') {
                 const confirmFlex = buildEmergencyConfirmFlex(
-                  activeSession.incidentId,
+                  activeSession.id,
                   activeSession.event_type,
                   activeSession.location,
                   activeSession.description,
@@ -1675,33 +1818,29 @@ export async function POST(req) {
 
         // 0.4️⃣ 緊急事件送審 - 方案C：引導式 + 快速選項
         if (cleanText === '回報緊急事件') {
+          console.log('[分流:緊急事件] 啟動', { userId, userText, cleanText });
           try {
-            console.log('[🚨 Emergency] 啟動緊急事件流程');
-            // 清除舊的未完成會話
-            emergencySessions.delete(userId);
+            // 清除所有舊的 line_session（包含 draft 及已提交的 submitted），防止孤兒 session 造成鬼打牆
+            await supabase
+              .from('emergency_incidents')
+              .update({
+                status: 'rejected',
+                updated_at: new Date().toISOString()
+              })
+              .eq('source', 'line_session')
+              .eq('reporter_line_user_id', userId)
+              .in('status', ['draft', 'submitted']);
 
-            // 建立新會話記錄到 emergency_incidents（初始狀態 draft）
-            console.log('[🚨 Emergency] 準備 insert，userId:', userId);
-            const { data: newIncident, error: sessionErr } = await supabase
+            // 建立新會話
+            const { error: sessionErr } = await supabase
               .from('emergency_incidents')
               .insert([{
                 source: 'line_session',
                 reporter_line_user_id: userId,
                 status: 'draft'
-              }])
-              .select('id')
-              .maybeSingle();
+              }]);
 
             if (sessionErr) {
-              console.error('[🚨 Emergency] ❌ Insert 失敗，錯誤詳情:', {
-                message: sessionErr.message,
-                code: sessionErr.code,
-                details: sessionErr.details,
-                hint: sessionErr.hint
-              });
-            }
-            
-            if (sessionErr || !newIncident) {
               console.error('❌ 建立會話失敗:', sessionErr);
               await safeReplyMessage(replyToken, userId, {
                 type: 'text',
@@ -1710,14 +1849,6 @@ export async function POST(req) {
               usedReplyTokens.add(replyToken);
               continue;
             }
-            
-            console.log('[🚨 Emergency] ✅ Insert 成功，新 incident ID:', newIncident.id);
-
-            // 記錄會話到內存
-            emergencySessions.set(userId, {
-              incidentId: newIncident.id,
-              status: 'event_type'
-            });
 
             // 推送事件類型選擇卡片
             const eventTypesFlex = {
@@ -1836,77 +1967,84 @@ export async function POST(req) {
         }
 
 
-        // 0.5️⃣ 查看最新投票
+        // 0.5️⃣ 查看最新投票 - 顯示菜單
         if (cleanText === '查看最新投票') {
+          console.log('[分流:投票] 查看最新投票菜單', { userId, userText, cleanText });
           try {
-            const { data: latestVote, error: voteQueryError } = await supabase
-              .from('votes')
-              .select('id, title, description, options, created_at, ends_at, status')
-              .eq('status', 'active')
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
-            if (voteQueryError) {
-              console.error('❌ 查詢最新投票失敗:', voteQueryError);
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '❌ 查詢最新投票失敗，請稍後再試。'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            if (!latestVote) {
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '📭 目前沒有進行中的投票。'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            let optionsText = '未提供';
-            if (Array.isArray(latestVote.options) && latestVote.options.length > 0) {
-              optionsText = latestVote.options.join('、');
-            } else if (typeof latestVote.options === 'string' && latestVote.options.trim()) {
-              optionsText = latestVote.options;
-            }
-
-            const createdAtText = latestVote.created_at
-              ? new Date(latestVote.created_at).toLocaleString('zh-TW', { hour12: false })
-              : '未提供';
-            const endsAtText = latestVote.ends_at
-              ? new Date(latestVote.ends_at).toLocaleString('zh-TW', { hour12: false })
-              : '未設定';
-            const statusMap = {
-              active: '🟢 進行中',
-              closed: '⚪ 已結束'
+            // 顯示選單卡片
+            const voteMenuFlex = {
+              type: 'flex',
+              altText: '🗳️ 投票查詢',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '🗳️ 投票查詢',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: '請選擇要查詢的項目',
+                      color: '#999999',
+                      size: 'sm',
+                      wrap: true
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#3498DB',
+                      action: {
+                        type: 'postback',
+                        label: '🗳️ 最新一筆',
+                        data: 'action=vote_latest',
+                        displayText: '查看最新一筆投票'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#9B59B6',
+                      action: {
+                        type: 'postback',
+                        label: '📝 期限內未投的',
+                        data: 'action=vote_not_voted',
+                        displayText: '查看期限內未投的投票'
+                      }
+                    }
+                  ]
+                }
+              }
             };
-            const statusText = statusMap[latestVote.status] || latestVote.status || '未知';
 
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text:
-                `🗳️ 最新投票資訊\n` +
-                `標題：${latestVote.title || '未提供'}\n` +
-                `狀態：${statusText}\n` +
-                `選項：${optionsText}\n` +
-                `建立時間：${createdAtText}\n` +
-                `截止時間：${endsAtText}\n` +
-                `說明：${latestVote.description || '無'}`
-            });
+            await client.replyMessage(replyToken, voteMenuFlex);
             usedReplyTokens.add(replyToken);
+            console.log('✅ [投票防護] 菜單已回覆，即將執行 continue 跳過 LLM');
           } catch (err) {
-            console.error('❌ 最新投票查詢例外:', err);
+            console.error('❌ 投票菜單失敗:', err);
             if (!usedReplyTokens.has(replyToken)) {
               await client.replyMessage(replyToken, {
                 type: 'text',
-                text: '❌ 查詢最新投票失敗，請稍後再試。'
+                text: '❌ 查詢失敗，請稍後再試。'
               });
               usedReplyTokens.add(replyToken);
             }
           }
+          console.log('✅ [投票防護] 執行 continue，防護成功 ✓✓✓');
           continue;
         }
 
@@ -1972,14 +2110,79 @@ export async function POST(req) {
           continue;
         }
 
-        // 1.5️⃣ 包裹最新狀態查詢（依 LINE 使用者綁定單位查最新一筆）
+        // 1.5️⃣ 智能分流：區分「操作型指令」和「問答型問題」
+        // 操作指令 → 觸發功能選單；問答 → 進入 chatbot/KMS
         const normalizedUserText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '');
-        const isFeeQuery = normalizedUserText === '查詢我的管理費';
-        const isPackageQuery = normalizedUserText === '查詢我的包裹';
+        
+        // 🎯 管理費：操作指令 vs 問答
+        const feeMenuCommands = [
+          '管理費',
+          '查管理費',
+          '我的管理費',
+          '查詢我的管理費',
+          '管理費查詢'
+        ];
+        const feeQuestionPatterns = [
+          '怎麼計算',
+          '如何計算',
+          '怎麼算',
+          '計算方式',
+          '標準',
+          '規則',
+          '包含',
+          '為什麼',
+          '是什麼',
+          '什麼是',
+          '介紹',
+          '說明'
+        ];
+        const isFeeQuestion = normalizedUserText.includes('管理費') && feeQuestionPatterns.some(kw => normalizedUserText.includes(kw));
+        const isFeeQuery = feeMenuCommands.includes(normalizedUserText) && !isFeeQuestion;
+        
+        // 🎯 包裹：操作指令 vs 問答
+        const packageMenuCommands = [
+          '包裹',
+          '查包裹',
+          '我的包裹',
+          '查詢我的包裹',
+          '查詢包裹',
+          '包裹查詢'
+        ];
+        const packageQuestionPatterns = ['怎麼', '如何', '多久', '什麼時候', '為什麼', '規則', '政策'];
+        const isPackageQuestion = normalizedUserText.includes('包裹') && packageQuestionPatterns.some(kw => normalizedUserText.includes(kw));
+        const isPackageQuery = packageMenuCommands.includes(normalizedUserText) && !isPackageQuestion;
+        
+        // 🎯 報修：操作指令 vs 問答
+        const repairMenuCommands = [
+          '我要報修',
+          '報修',
+          '查詢報修',
+          '查報修狀態',
+          '報修狀態',
+          '查看報修狀態',
+          '我的報修',
+          '報修記錄'
+        ];
+        const repairQuestionPatterns = ['怎麼', '如何', '流程', '步驟', '多久', '會費', '收費', '為什麼'];
+        const isRepairQuestion = normalizedUserText.includes('報修') && repairQuestionPatterns.some(kw => normalizedUserText.includes(kw));
+        const isRepairQuery = repairMenuCommands.includes(normalizedUserText) && !isRepairQuestion;
+        
+        // 🎯 投票：操作指令 vs 問答
+        const voteMenuCommands = [
+          '查看最新投票',
+          '最新投票',
+          '查詢投票',
+          '投票查詢',
+          '投票'
+        ];
+        const voteQuestionPatterns = ['怎麼投票', '如何投票', '規則', '期限', '為什麼'];
+        const isVoteQuestion = normalizedUserText.includes('投票') && voteQuestionPatterns.some(kw => normalizedUserText.includes(kw));
+        const isVoteQuery = voteMenuCommands.includes(normalizedUserText) && !isVoteQuestion;
 
         if (isFeeQuery) {
+          console.log('[分流:管理費] 查詢選單', { userId, userText, normalizedUserText });
           try {
-            // 優先使用本次已查到的 profile，必要時補查 unit_id
+            // 檢查綁定狀態
             let profileForFee = existingProfile;
 
             if (!profileForFee?.unit_id) {
@@ -2006,71 +2209,85 @@ export async function POST(req) {
               continue;
             }
 
-            const { data: latestFee, error: feeError } = await supabase
-              .from('fees')
-              .select('*')
-              .eq('unit_id', profileForFee.unit_id)
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
+            // 顯示選單卡片
+            const feeMenuFlex = {
+              type: 'flex',
+              altText: '💰 管理費查詢',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '💰 管理費查詢',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: '請選擇要查詢的項目',
+                      color: '#999999',
+                      size: 'sm',
+                      wrap: true
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#E74C3C',
+                      action: {
+                        type: 'postback',
+                        label: '🟡 查看所有未繳',
+                        data: 'action=fee_unpaid',
+                        displayText: '查看所有未繳'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#3498DB',
+                      action: {
+                        type: 'postback',
+                        label: '📋 最新一筆',
+                        data: 'action=fee_latest',
+                        displayText: '查看最新一筆'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#9B59B6',
+                      action: {
+                        type: 'postback',
+                        label: '📊 繳費紀錄',
+                        data: 'action=fee_history',
+                        displayText: '查看繳費紀錄'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
 
-            if (feeError) {
-              throw feeError;
-            }
-
-            if (!latestFee) {
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '💰 目前查不到您的管理費資料。\n若您剛收到通知，請稍後再查詢。'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            const { data: unitData } = await supabase
-              .from('units')
-              .select('unit_number, unit_code')
-              .eq('id', profileForFee.unit_id)
-              .maybeSingle();
-
-            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
-            const amountText = latestFee.amount != null ? `NT$ ${latestFee.amount}` : '未提供';
-
-            const dueDate = latestFee.due ? new Date(latestFee.due) : null;
-            const dueText = dueDate && !Number.isNaN(dueDate.getTime())
-              ? dueDate.toLocaleDateString('zh-TW')
-              : (latestFee.due || '未提供');
-
-            const invoiceText =
-              latestFee.invoice ??
-              latestFee.invoice_number ??
-              latestFee.invoice_no ??
-              latestFee.receipt_no ??
-              '未提供';
-
-            const feeStatusText = latestFee.paid === true
-              ? '✅ 已繳費'
-              : latestFee.paid === false
-                ? '🟡 未繳費'
-                : (latestFee.status ? `ℹ️ ${latestFee.status}` : '未提供');
-
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text:
-                `💰 您最新一筆管理費資訊\n` +
-                `房號：${roomText}\n` +
-                `金額：${amountText}\n` +
-                `到期日：${dueText}\n` +
-                `發票：${invoiceText}\n` +
-                `繳費狀態：${feeStatusText}`
-            });
+            await client.replyMessage(replyToken, feeMenuFlex);
             usedReplyTokens.add(replyToken);
           } catch (feeErr) {
-            console.error('❌ 管理費查詢失敗:', feeErr);
+            console.error('❌ 管理費查詢選單失敗:', feeErr);
             if (!usedReplyTokens.has(replyToken)) {
               await client.replyMessage(replyToken, {
                 type: 'text',
-                text: '❌ 管理費查詢失敗，請稍後再試。'
+                text: '❌ 查詢失敗，請稍後再試。'
               });
               usedReplyTokens.add(replyToken);
             }
@@ -2079,8 +2296,9 @@ export async function POST(req) {
         }
 
         if (isPackageQuery) {
+          console.log('[分流:包裹] 查詢選單', { userId, userText, normalizedUserText });
           try {
-            // 優先使用本次已查到的 profile，必要時補查 unit_id
+            // 檢查綁定狀態
             let profileForPackage = existingProfile;
 
             if (!profileForPackage?.unit_id) {
@@ -2107,61 +2325,63 @@ export async function POST(req) {
               continue;
             }
 
-            const { data: latestPackage, error: packageError } = await supabase
-              .from('packages')
-              .select('id, courier, tracking_number, status, arrived_at, created_at, updated_at')
-              .eq('unit_id', profileForPackage.unit_id)
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
-            const { data: unitData } = await supabase
-              .from('units')
-              .select('unit_number, unit_code')
-              .eq('id', profileForPackage.unit_id)
-              .maybeSingle();
-
-            if (packageError) {
-              throw packageError;
-            }
-
-            if (!latestPackage) {
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '📦 目前查不到您的包裹資料。\n若您剛收到通知，請稍後再查詢。'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            const packageStatusMap = {
-              pending: '🟡 未領取（待領取）',
-              picked_up: '✅ 已領取',
+            // 顯示選單卡片
+            const packageMenuFlex = {
+              type: 'flex',
+              altText: '📦 包裹查詢',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '📦 包裹查詢',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: '請選擇要查詢的項目',
+                      color: '#999999',
+                      size: 'sm',
+                      wrap: true
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#E74C3C',
+                      action: {
+                        type: 'postback',
+                        label: '🟡 待領取',
+                        data: 'action=package_pending',
+                        displayText: '查看待領取'
+                      }
+                    }
+                  ]
+                }
+              }
             };
 
-            const statusText = packageStatusMap[latestPackage.status] || `ℹ️ ${latestPackage.status || '未知狀態'}`;
-            const arrivedAtText = latestPackage.arrived_at
-              ? new Date(latestPackage.arrived_at).toLocaleString('zh-TW', { hour12: false })
-              : '未提供';
-            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
-
-            await client.replyMessage(replyToken, {
-              type: 'text',
-              text:
-                `📦 您最新一筆包裹狀態\n` +
-                `狀態：${statusText}\n` +
-                `快遞公司：${latestPackage.courier || '未提供'}\n` +
-                `房號：${roomText}\n` +
-                `追蹤號碼：${latestPackage.tracking_number || '未提供'}\n` +
-                `到件時間：${arrivedAtText}`
-            });
+            await client.replyMessage(replyToken, packageMenuFlex);
             usedReplyTokens.add(replyToken);
           } catch (pkgErr) {
-            console.error('❌ 包裹查詢失敗:', pkgErr);
+            console.error('❌ 包裹查詢選單失敗:', pkgErr);
             if (!usedReplyTokens.has(replyToken)) {
               await client.replyMessage(replyToken, {
                 type: 'text',
-                text: '❌ 包裹查詢失敗，請稍後再試。'
+                text: '❌ 查詢失敗，請稍後再試。'
               });
               usedReplyTokens.add(replyToken);
             }
@@ -2169,42 +2389,112 @@ export async function POST(req) {
           continue;
         }
 
-        const activeWorkflowSession = repairSessions.get(userId) || facilityBookingSessions.get(userId) || emergencySessions.get(userId);
-        if (activeWorkflowSession) {
-          console.log('[流程保護] 偵測到進行中的報修/預約/緊急事件流程，跳過 AI 查詢');
+        if (isRepairQuery) {
+          console.log('[分流:報修] 查詢選單', { userId, userText, normalizedUserText });
+          try {
+            // 顯示選單卡片
+            const repairMenuFlex = {
+              type: 'flex',
+              altText: '🛠 報修',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '🛠 報修',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: '請選擇要執行的操作',
+                      color: '#999999',
+                      size: 'sm',
+                      wrap: true
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#E74C3C',
+                      action: {
+                        type: 'postback',
+                        label: '🛠 我要報修',
+                        data: 'action=repair_start',
+                        displayText: '開始報修'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#3498DB',
+                      action: {
+                        type: 'postback',
+                        label: '📄 查看報修狀態',
+                        data: 'action=repair_status',
+                        displayText: '查看報修狀態'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+
+            await client.replyMessage(replyToken, repairMenuFlex);
+            usedReplyTokens.add(replyToken);
+          } catch (repairErr) {
+            console.error('❌ 報修選單失敗:', repairErr);
+            if (!usedReplyTokens.has(replyToken)) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 查詢失敗，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+            }
+          }
           continue;
         }
 
         // 2️⃣ 其他問題 → 直接呼叫 chat 函數進行 AI 查詢
         try {
-          // 再次檢查是否為系統提示訊息（雙重防護）
-          // 先檢查 emoji
+          // 檢查是否為系統提示訊息（忽略）
           if (userText.includes('📍') || userText.includes('🛠') || userText.includes('📷')) {
             console.log('[AI查詢] 偵測到報修提示 emoji，跳過 AI 查詢');
             continue;
           }
-          
-          const checkText = userText.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
-          const blockKeywords = [
-            '請上傳照片', 
-            '上傳照片並輸入', 
-            '地點與問題說明', 
-            '請輸入您想查詢',
-            '上傳照片'
-          ];
-          
-          const shouldBlock = blockKeywords.some(keyword => {
-            const cleanKeyword = keyword.replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
-            return checkText.includes(cleanKeyword);
-          });
-          
-          if (shouldBlock) {
-            console.log('[AI查詢] 偵測到系統提示訊息，跳過 AI 查詢');
+
+          // 投票相關訊息：不進 LLM
+          if (userText.includes('vote:') || cleanText === '查看最新投票') {
+            console.log('[AI查詢] 偵測到投票相關，跳過 AI 查詢');
+            continue;
+          }
+
+          // 進行中的會話：不進 LLM
+          if (activeSession || cleanText === '回報緊急事件') {
+            console.log('[AI查詢] 偵測到緊急事件相關，跳過 AI 查詢');
+            continue;
+          }
+
+          if (facilitySession || isFacilityMenuText || isStartBookingText || isMyBookingsText || isCancelBookingText) {
+            console.log('[AI查詢] 偵測到設施預約相關，跳過 AI 查詢');
             continue;
           }
 
           // LINE webhook event 的唯一 ID（有些版本欄位名稱不同）
           const eventId = event.webhookEventId || event.id || `${userId}_${Date.now()}`;
+          console.log('\n🔴 [LLM標記] ⚠️ 進入 LLM 查詢邏輯');
           console.log('[DEBUG] Event ID:', eventId);
           console.log('[DEBUG] Event 完整資料:', JSON.stringify(event, null, 2));
           
@@ -2223,7 +2513,10 @@ export async function POST(req) {
             }
           }
           
+          console.log('\n🔴 [LLM執行] ⚠️⚠️⚠️ 即將進入 LLM 查詢');
+          console.log('🔴 [LLM執行] 參數:', { userId, userText, cleanText, isFeeQuery, isPackageQuery, hasRepairSession: !!currentSession, hasEmergencySession: !!activeSession, hasFacilitySession: !!facilitySession });
           const result = await chat(userText);
+          console.log('🔴 [LLM執行] LLM 回應完成');
           
           // ===== 處理追問澄清機制 =====
           if (result.needsClarification) {
@@ -2452,107 +2745,56 @@ export async function POST(req) {
         console.log('[報修-圖片] repairSessions 總數:', repairSessions.size);
         console.log('[報修-圖片] 所有 sessions:', Array.from(repairSessions.entries()));
 
-        // 緊急事件流程的圖片上傳（優先處理，避免誤判成報修）
-        try {
-          const activeEmergencySession = emergencySessions.get(userId);
-
-          if (activeEmergencySession) {
-            const uploadedImageUrl = await uploadEmergencyImageFromLineMessage(messageId, userId);
-
-            // 更新 emergency_incidents 表的圖片
-            const { error: saveImageErr } = await supabase
-              .from('emergency_incidents')
-              .update({
-                image_url: uploadedImageUrl,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', activeEmergencySession.incidentId);
-
-            if (saveImageErr) {
-              console.error('❌ 緊急事件圖片保存失敗:', saveImageErr);
-              await safeReplyMessage(replyToken, userId, {
-                type: 'text',
-                text: '❌ 圖片上傳失敗，請稍後再試。'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            // 更新內存狀態
-            emergencySessions.set(userId, {
-              ...activeEmergencySession,
-              image_url: uploadedImageUrl
-            });
-
-            let nextStepText = '✅ 圖片已附加到本次緊急事件。';
-            if (activeEmergencySession.status === 'event_type') {
-              nextStepText += '\n請先選擇或輸入事件類型。';
-            } else if (activeEmergencySession.status === 'location') {
-              nextStepText += '\n請繼續輸入事件地點。';
-            } else if (activeEmergencySession.status === 'description') {
-              nextStepText += '\n請繼續輸入事件描述。';
-            } else if (activeEmergencySession.status === 'confirm') {
-              const confirmFlex = buildEmergencyConfirmFlex(
-                activeEmergencySession.incidentId,
-                activeEmergencySession.event_type,
-                activeEmergencySession.location,
-                activeEmergencySession.description,
-                uploadedImageUrl
-              );
-              await safeReplyMessage(replyToken, userId, [
-                { type: 'text', text: nextStepText },
-                confirmFlex
-              ]);
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
-
-            await safeReplyMessage(replyToken, userId, {
-              type: 'text',
-              text: nextStepText
-            });
-            usedReplyTokens.add(replyToken);
-            continue;
+        // 先檢查報修 session，避免被舊的緊急事件 draft 誤攔截
+        let currentSession = repairSessions.get(userId);
+        console.log('[報修-圖片] 內存 session:', { hasSession: !!currentSession, location: currentSession?.location, description: currentSession?.description });
+        
+        if (!currentSession) {
+          console.log('[報修-圖片] 內存 session 為空，嘗試從 DB 恢復...');
+          const dbDraft = await getActiveMaintenanceDraft(userId);
+          if (dbDraft) {
+            console.log('[報修-圖片] 找到 DB 草稿:', { id: dbDraft.id, location: dbDraft.location, description: dbDraft.description });
+            currentSession = {
+              location: dbDraft.location,
+              description: dbDraft.description,
+              startTime: Date.now(),
+              dbId: dbDraft.id
+            };
+            repairSessions.set(userId, currentSession);
+            console.log('[報修-圖片] ✅ 使用資料庫草稿恢復 session');
+          } else {
+            console.log('[報修-圖片] ⚠️ DB 中沒有找到報修草稿 (source=line_maintenance_session, status=draft)');
           }
-        } catch (emergencyImageErr) {
-          console.error('❌ 緊急事件圖片處理失敗:', emergencyImageErr);
-          if (!usedReplyTokens.has(replyToken)) {
-            let emergencyImageErrorText = '❌ 圖片處理失敗，請稍後再試。';
-            if (emergencyImageErr?.code === 'HEIF_CONVERT_FAILED') {
-              emergencyImageErrorText = '❌ HEIF 圖片轉檔失敗，請重新上傳 JPG/PNG 圖片。';
-            } else if (emergencyImageErr?.code === 'UNSUPPORTED_IMAGE_FORMAT') {
-              emergencyImageErrorText = '⚠️ 目前僅支援 JPG/PNG 圖片，請重新上傳。';
-            } else if (emergencyImageErr?.code === 'STORAGE_UPLOAD_FAILED') {
-              emergencyImageErrorText = '❌ 圖片儲存失敗，請稍後再試；若持續發生請通知管理單位檢查上傳權限設定。';
-            }
-            await safeReplyMessage(replyToken, userId, {
-              type: 'text',
-              text: emergencyImageErrorText
-            });
-            usedReplyTokens.add(replyToken);
-          }
-          continue;
+        } else {
+          console.log('[報修-圖片] ✅ 使用內存 session');
         }
-
-        // 檢查是否在報修流程中（已填寫地點和描述）
-        const currentSession = repairSessions.get(userId);
+        
+        const hasLocation = currentSession?.location && String(currentSession.location).trim() !== '';
+        const hasDescription = currentSession?.description && String(currentSession.description).trim() !== '';
 
         console.log('[報修-圖片] Session 狀態:', {
           hasSession: !!currentSession,
           location: currentSession?.location,
-          description: currentSession?.description
+          description: currentSession?.description,
+          hasLocation,
+          hasDescription,
+          isComplete: hasLocation && hasDescription
         });
 
-        // 檢查 session 是否完整（地點和描述都存在）
-        const hasLocation = currentSession?.location && currentSession.location.trim() !== '';
-        const hasDescription = currentSession?.description && currentSession.description.trim() !== '';
-
+        // 報修流程的圖片上傳（完整 session 優先）
         if (currentSession && hasLocation && hasDescription) {
           console.log('[報修-圖片] ✅ Session 完整，開始提交報修');
-          try {
-            const maintenanceImageUrl = await uploadMaintenanceImageFromLineMessage(messageId, userId);
 
-            // 直接寫入 maintenance（含圖片）
+          // 嘗試上傳圖片，失敗時 fallback 無圖繼續提交
+          let maintenanceImageUrl = null;
+          try {
+            maintenanceImageUrl = await uploadMaintenanceImageFromLineMessage(messageId, userId);
+          } catch (imgErr) {
+            console.error('[報修-圖片] ⚠️ 圖片上傳失敗，改無圖提交:', imgErr.message);
+          }
+
+          try {
+            // 直接寫入 maintenance
             const { data: completedRepair, error: insertError } = await supabase
               .from('maintenance')
               .insert([{
@@ -2581,28 +2823,24 @@ export async function POST(req) {
             }
 
             const repair = completedRepair;
-
             console.log('[報修-圖片] ✅ 報修提交成功:', repair.id);
-
-            // 清除 session
             repairSessions.delete(userId);
+            await closeMaintenanceDraft(userId, 'submitted');
 
-            // 回覆成功訊息
+            const photoNote = maintenanceImageUrl
+              ? '📸 已附上照片'
+              : '⚠️ 照片上傳失敗，報修已成功送出（無照片）';
             await client.replyMessage(replyToken, {
               type: 'text',
-              text: `✅ 報修已送出\n📌 編號：#${String(repair.id).slice(0, 8)}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.equipment}\n📝 問題：${repair.description}\n📸 已附上照片\n\n管理單位會盡快處理，謝謝您的通報！`
+              text: `✅ 報修已送出\n📌 編號：#${String(repair.id).slice(0, 8)}\n目前狀態：🟡 待處理\n\n📍 地點：${repair.equipment}\n📝 問題：${repair.description}\n${photoNote}\n\n管理單位會盡快處理，謝謝您的通報！`
             });
-            usedReplyTokens.add(replyToken); // 標記為已使用
+            usedReplyTokens.add(replyToken);
             console.log('[報修-圖片] ✅ 訊息回覆成功');
           } catch (err) {
-            console.error('[報修-圖片] ❌ 處理照片失敗:', err);
-            // 檢查 replyToken 是否已使用
+            console.error('[報修-圖片] ❌ 提交失敗:', err);
             if (!usedReplyTokens.has(replyToken)) {
               try {
-                await client.replyMessage(replyToken, {
-                  type: 'text',
-                  text: '❌ 照片處理失敗，請稍後再試'
-                });
+                await client.replyMessage(replyToken, { type: 'text', text: '❌ 報修單提交失敗，請稍後再試' });
                 usedReplyTokens.add(replyToken);
               } catch (replyErr) {
                 console.error('[報修-圖片] 回覆錯誤訊息失敗:', replyErr.message);
@@ -2610,6 +2848,90 @@ export async function POST(req) {
             } else {
               console.warn('[報修-圖片] ⚠️ replyToken 已使用，無法回覆錯誤訊息');
             }
+          }
+          continue;
+        }
+
+        // 緊急事件流程的圖片上傳（僅在報修流程未命中時處理）
+        try {
+          const emergencyImgSessionTTL = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+          const { data: activeEmergencySession } = await supabase
+            .from('emergency_incidents')
+            .select('id, status, event_type, location, description')
+            .eq('source', 'line_session')
+            .eq('reporter_line_user_id', userId)
+            .eq('status', 'draft')
+            .gte('updated_at', emergencyImgSessionTTL)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (activeEmergencySession) {
+            const uploadedImageUrl = await uploadEmergencyImageFromLineMessage(messageId, userId);
+
+            const { error: saveImageErr } = await supabase
+              .from('emergency_incidents')
+              .update({
+                image_url: uploadedImageUrl,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', activeEmergencySession.id)
+              .eq('source', 'line_session')
+              .eq('status', 'draft');
+
+            if (saveImageErr) {
+              console.error('❌ 緊急事件圖片保存失敗:', saveImageErr);
+              await safeReplyMessage(replyToken, userId, {
+                type: 'text',
+                text: '❌ 圖片上傳失敗，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            let nextStepText = '✅ 圖片已附加到本次緊急事件。';
+            const emergencyDraftStep = getEmergencyDraftStep(activeEmergencySession);
+            if (emergencyDraftStep === 'event_type') {
+              nextStepText += '\n請先選擇或輸入事件類型。';
+            } else if (emergencyDraftStep === 'location') {
+              nextStepText += '\n請繼續輸入事件地點。';
+            } else if (emergencyDraftStep === 'description') {
+              nextStepText += '\n請繼續輸入事件描述。';
+            } else if (emergencyDraftStep === 'confirm') {
+              const confirmFlex = buildEmergencyConfirmFlex(
+                activeEmergencySession.id,
+                activeEmergencySession.event_type,
+                activeEmergencySession.location,
+                activeEmergencySession.description,
+                uploadedImageUrl
+              );
+              await safeReplyMessage(replyToken, userId, [
+                { type: 'text', text: nextStepText },
+                confirmFlex
+              ]);
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+            await safeReplyMessage(replyToken, userId, {
+              type: 'text',
+              text: nextStepText
+            });
+            usedReplyTokens.add(replyToken);
+            continue;
+          }
+        } catch (emergencyImageErr) {
+          console.error('❌ 緊急事件圖片處理失敗:', emergencyImageErr);
+          if (!usedReplyTokens.has(replyToken)) {
+            let emergencyImageErrorText = '❌ 圖片處理失敗，請稍後再試。';
+            if (emergencyImageErr?.code === 'HEIF_CONVERT_FAILED') {
+              emergencyImageErrorText = '❌ HEIF 圖片轉檔失敗，請重新上傳 JPG/PNG 圖片。';
+            } else if (emergencyImageErr?.code === 'UNSUPPORTED_IMAGE_FORMAT') {
+              emergencyImageErrorText = '⚠️ 目前僅支援 JPG/PNG 圖片，請重新上傳。';
+            } else if (emergencyImageErr?.code === 'STORAGE_UPLOAD_FAILED') {
+              emergencyImageErrorText = '❌ 圖片儲存失敗，請稍後再試；若持續發生請通知管理單位檢查上傳權限設定。';
+            }
+            await safeReplyMessage(replyToken, userId, { type: 'text', text: emergencyImageErrorText });
+            usedReplyTokens.add(replyToken);
           }
           continue;
         }
@@ -2910,7 +3232,9 @@ export async function POST(req) {
             await supabase
               .from('profiles')
               .update({
-                points_balance: Number(existingProfile.points_balance || 0) + refundPoints,
+                points_balance: (existingProfile?.points_balance == null
+                  ? 100
+                  : Math.max(0, Number(existingProfile.points_balance))) + refundPoints,
                 updated_at: new Date().toISOString()
               })
               .eq('id', existingProfile.id);
@@ -2939,30 +3263,18 @@ export async function POST(req) {
         if (action === 'select_event_type') {
           const eventType = params.get('type');
           try {
-            console.log('[🚨 Postback] select_event_type:', { userId, eventType });
-            const activeSession = emergencySessions.get(userId);
-            
-            if (!activeSession) {
-              console.error('[🚨 Postback] ❌ 找不到活躍會話');
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: '❌ 會話已過期，請重新開始。'
-              });
-              continue;
-            }
-
-            // 更新 emergency_incidents 表（只更新 event_type，不改 status）
             const { error: updateErr } = await supabase
               .from('emergency_incidents')
               .update({
                 event_type: eventType,
                 updated_at: new Date().toISOString()
               })
-              .eq('id', activeSession.incidentId)
-              .eq('status', 'draft'); // 只更新還在 draft 狀態的事件
+              .eq('source', 'line_session')
+              .eq('reporter_line_user_id', userId)
+              .eq('status', 'draft');
 
             if (updateErr) {
-              console.error('[🚨 Postback] ❌ 更新會話失敗:', updateErr);
+              console.error('❌ 更新會話失敗:', updateErr);
               await client.replyMessage(replyToken, {
                 type: 'text',
                 text: '❌ 發生錯誤，請稍後重試。'
@@ -2970,20 +3282,13 @@ export async function POST(req) {
               continue;
             }
 
-            // 更新內存狀態（追蹤流程步驟）
-            emergencySessions.set(userId, {
-              ...activeSession,
-              status: 'location', // 內存中的步驟
-              event_type: eventType
-            });
-
             await client.replyMessage(replyToken, {
               type: 'text',
               text: `✅ 已選擇事件類型：${eventType}\n\n📍 請輸入事件地點（例如：A棟3樓、地下室等）`
             });
             continue;
           } catch (err) {
-            console.error('[🚨 Postback] ❌ 事件類型選擇失敗:', err);
+            console.error('❌ 事件類型選擇失敗:', err);
             await client.replyMessage(replyToken, {
               type: 'text',
               text: '❌ 發生錯誤，請稍後再試。'
@@ -3094,31 +3399,31 @@ export async function POST(req) {
 
         // ===== 提交緊急事件 =====
         if (action === 'submit_emergency') {
-          try {
-            console.log('[🚨 Submit] 準備提交緊急事件，userId:', userId);
-            const activeSession = emergencySessions.get(userId);
-            
-            if (!activeSession) {
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: 'ℹ️ 會話已過期，請重新開始。'
-              });
-              usedReplyTokens.add(replyToken);
-              continue;
-            }
+          const sessionId = params.get('session_id');
 
+          try {
+            const { mode, lineClient: notificationClient } = getNotificationClient();
+            console.log(`[${BOT_TAG}] [緊急事件審核推播] 目前通知通道: ${mode === 'test' ? '測試 BOT2' : '正式'}`);
             const nowIso = new Date().toISOString();
 
-            // 從 emergency_incidents 取得當前資料
-            const { data: incident, error: fetchErr } = await supabase
+            const { data: session, error: sessionErr } = await supabase
               .from('emergency_incidents')
-              .select('*')
-              .eq('id', activeSession.incidentId)
+              .update({
+                status: 'submitted',
+                updated_at: nowIso
+              })
+              .eq('id', sessionId)
+              .eq('source', 'line_session')
+              .eq('reporter_line_user_id', userId)
               .eq('status', 'draft')
-              .single();
+              .select('id, event_type, location, description, image_url')
+              .maybeSingle();
 
-            if (fetchErr || !incident) {
-              console.error('[🚨 Submit] ❌ 查詢事件失敗:', fetchErr);
+            if (sessionErr) {
+              throw sessionErr;
+            }
+
+            if (!session) {
               await client.replyMessage(replyToken, {
                 type: 'text',
                 text: 'ℹ️ 這筆緊急事件已處理或已提交，請勿重複送出。'
@@ -3127,34 +3432,43 @@ export async function POST(req) {
               continue;
             }
 
-            // 更新 emergency_incidents 狀態為 submitted（已完成編輯，提交審核）
-            const { error: updateErr } = await supabase
+            // 清除此用戶其他孤兒 draft（race condition 或快速點擊可能產生多個 draft）
+            await supabase
               .from('emergency_incidents')
-              .update({
-                status: 'submitted',
+              .update({ status: 'rejected', updated_at: nowIso })
+              .eq('source', 'line_session')
+              .eq('reporter_line_user_id', userId)
+              .eq('status', 'draft')
+              .neq('id', sessionId);
+
+            // 寫入緊急報告
+            const { data: createdEmergency, error: emergencyInsertError } = await supabase
+              .from('emergency_incidents')
+              .insert([{
+                source: 'line_report',
+                reporter_line_user_id: userId,
+                reporter_profile_id: existingProfile?.id || null,
+                event_type: session.event_type,
+                location: session.location,
+                description: session.description || '未提供',
+                image_url: session.image_url || null,
+                status: 'pending',
+                source_record_id: session.id,
+                created_at: nowIso,
                 updated_at: nowIso
-              })
-              .eq('id', activeSession.incidentId)
-              .eq('status', 'draft');
+              }])
+              .select('id, event_type, location, description, image_url, status, created_at')
+              .single();
 
-            if (updateErr) throw updateErr;
+            if (emergencyInsertError || !createdEmergency) {
+              throw emergencyInsertError || new Error('寫入失敗');
+            }
 
-            // 使用已存在的 incident 記錄作為 createdEmergency
-            const createdEmergency = {
-              id: activeSession.incidentId,
-              event_type: incident.event_type,
-              location: incident.location,
-              description: incident.description || '未提供',
-              image_url: incident.image_url || null,
-              status: 'submitted',
-              created_at: incident.created_at
-            };
-
-            // 查詢所有管委會（committee）
+            // 查詢所有管委會（committee）+ 管理員（admin）
             const { data: admins, error: adminQueryError } = await supabase
               .from('profiles')
               .select('line_user_id, name')
-              .eq('role', 'committee')
+              .in('role', ['committee', 'admin'])
               .not('line_user_id', 'is', null);
 
             if (adminQueryError) {
@@ -3164,7 +3478,6 @@ export async function POST(req) {
                 text: '✅ 緊急事件已送出。\n⚠️ 目前通知管委會失敗，請稍後確認管理員帳號設定。'
               });
               usedReplyTokens.add(replyToken);
-              emergencySessions.delete(userId); // 清除內存會話
               continue;
             }
 
@@ -3179,7 +3492,6 @@ export async function POST(req) {
                 text: '✅ 緊急事件已送出。\n⚠️ 目前尚未設定可通知的管理員帳號。'
               });
               usedReplyTokens.add(replyToken);
-              emergencySessions.delete(userId); // 清除內存會話
               continue;
             }
 
@@ -3248,7 +3560,7 @@ export async function POST(req) {
 
             for (const adminLineId of adminTargets) {
               try {
-                await client.pushMessage(adminLineId, reviewFlex);
+                await notificationClient.pushMessage(adminLineId, reviewFlex);
               } catch (pushErr) {
                 console.error('⚠️ 推送管理員審核卡片失敗:', adminLineId, pushErr);
               }
@@ -3259,7 +3571,6 @@ export async function POST(req) {
               text: '✅ 緊急事件已送出，已通知管委會審核。'
             });
             usedReplyTokens.add(replyToken);
-            emergencySessions.delete(userId); // 清除內存會話
             continue;
           } catch (err) {
             console.error('❌ 提交緊急事件失敗:', err);
@@ -3274,23 +3585,15 @@ export async function POST(req) {
 
         // ===== 取消緊急事件回報 =====
         if (action === 'cancel_emergency') {
+          const sessionId = params.get('session_id');
           try {
-            console.log('[🚨 Cancel] 準備取消緊急事件，userId:', userId);
-            const activeSession = emergencySessions.get(userId);
-            
-            if (activeSession) {
-              // 更新 emergency_incidents 狀態為 canceled
-              await supabase
-                .from('emergency_incidents')
-                .update({
-                  status: 'canceled',
-                  updated_at: new Date().toISOString()
-                })
-                .eq('id', activeSession.incidentId);
-
-              // 清除內存會話
-              emergencySessions.delete(userId);
-            }
+            await supabase
+              .from('emergency_incidents')
+              .update({ status: 'rejected', updated_at: new Date().toISOString() })
+              .eq('id', sessionId)
+              .eq('source', 'line_session')
+              .eq('reporter_line_user_id', userId)
+              .eq('status', 'draft');
 
             await client.replyMessage(replyToken, {
               type: 'text',
@@ -3307,9 +3610,145 @@ export async function POST(req) {
           }
         }
 
+        // ===== 處理 Web 端緊急事件審核（emergency_approve / emergency_reject postback）=====
+        if (action === 'emergency_approve' || action === 'emergency_reject') {
+          const incidentId = params.get('incident_id');
+          const isApprove = action === 'emergency_approve';
+          console.log(`[${BOT_TAG}] [Emergency Review] action=${action} incidentId=${incidentId} userId=${userId}`);
+
+          try {
+            // 1. 驗證審核者身分
+            const { data: reviewer, error: reviewerErr } = await supabase
+              .from('profiles')
+              .select('id, name, role')
+              .eq('line_user_id', userId)
+              .maybeSingle();
+
+            console.log(`[${BOT_TAG}] [Emergency Review] reviewer:`, reviewer?.role, 'err:', reviewerErr?.message);
+
+            if (reviewerErr || !reviewer || !['committee', 'admin'].includes(reviewer.role)) {
+              await safeReplyMessage(replyToken, userId, { type: 'text', text: '⛔ 您沒有審核緊急事件的權限。' });
+              continue;
+            }
+
+            if (!incidentId) {
+              await safeReplyMessage(replyToken, userId, { type: 'text', text: '⚠️ 無法識別事件編號，請至後台操作。' });
+              continue;
+            }
+
+            // 自我審核防護：回報者不能審核自己提交的緊急事件
+            const { data: incidentMeta } = await supabase
+              .from('emergency_incidents')
+              .select('reporter_profile_id')
+              .eq('id', incidentId)
+              .maybeSingle();
+            if (incidentMeta?.reporter_profile_id && incidentMeta.reporter_profile_id === reviewer.id) {
+              await safeReplyMessage(replyToken, userId, { type: 'text', text: '⛔ 您不能審核自己提交的緊急事件。' });
+              continue;
+            }
+
+            // 2. 原子條件更新：直接在 DB 層做 status 過濾，完全避免 JS 字元編碼問題 + 防競爭條件
+            const newStatus = isApprove ? 'approved' : 'rejected';
+            const { data: updatedIncidentRows, error: updateErr } = await supabase
+              .from('emergency_incidents')
+              .update({
+                status: newStatus,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', incidentId)
+              .neq('status', 'approved')
+              .neq('status', '已發布')
+              .neq('status', 'rejected')
+              .neq('status', '已駁回')
+              .select('id, event_type, location, description, image_url');
+
+            console.log(`[${BOT_TAG}] [Emergency Review] 原子更新結果: rows=${updatedIncidentRows?.length ?? 0} err=${updateErr?.message}`);
+
+            if (updateErr) {
+              console.error('[Emergency Review] 更新狀態失敗:', updateErr);
+              await safeReplyMessage(replyToken, userId, { type: 'text', text: '❌ 審核更新失敗，請稍後再試。' });
+              continue;
+            }
+
+            if (!updatedIncidentRows || updatedIncidentRows.length === 0) {
+              // 0 rows → 狀態已非可審核，查詢當前狀態給出明確提示
+              const { data: cur } = await supabase
+                .from('emergency_incidents')
+                .select('status')
+                .eq('id', incidentId)
+                .maybeSingle();
+              if (!cur) {
+                await safeReplyMessage(replyToken, userId, { type: 'text', text: '⚠️ 找不到此緊急事件，可能已被處理。' });
+              } else {
+                const st = String(cur.status || '');
+                const isApprovedSt2 = st === 'approved' || st === '已發布';
+                const isRejectedSt2 = st === 'rejected' || st === '已駁回';
+                let msg;
+                if (isApprove && isApprovedSt2) msg = 'ℹ️ 此事件已發布，無需重複確認。';
+                else if (!isApprove && isRejectedSt2) msg = 'ℹ️ 此事件已駁回，無需重複操作。';
+                else if (isApprovedSt2 || isRejectedSt2) msg = `ℹ️ 此事件目前為「${st}」，無法重複審核。`;
+                else msg = `❌ 審核操作失敗（當前狀態：${st}），請確認系統權限（SUPABASE_SERVICE_ROLE_KEY）後重試。`;
+                await safeReplyMessage(replyToken, userId, { type: 'text', text: msg });
+              }
+              continue;
+            }
+
+            const incident = updatedIncidentRows[0];
+            console.log(`[${BOT_TAG}] [Emergency Review] DB 更新成功 → ${newStatus}`);
+
+            if (isApprove) {
+              // 4. 廣播：直接用 BOT1 自己的 client.broadcast()，發送給所有 BOT1 追蹤者
+              console.log(`[${BOT_TAG}] [緊急廣播] 使用 BOT1 broadcast`);
+
+              const broadcastText =
+                `🚨【緊急事件通知】\n` +
+                `類型：${incident.event_type || '未指定'}\n` +
+                `地點：${incident.location || '未指定'}\n` +
+                `描述：${incident.description || '未提供'}\n\n` +
+                `請住戶留意安全並配合現場指示。`;
+
+              try {
+                if (incident.image_url) {
+                  await client.broadcast([
+                    { type: 'text', text: broadcastText },
+                    { type: 'image', originalContentUrl: incident.image_url, previewImageUrl: incident.image_url }
+                  ]);
+                } else {
+                  await client.broadcast([{ type: 'text', text: broadcastText }]);
+                }
+                console.log(`[${BOT_TAG}] [緊急廣播] broadcast 成功`);
+              } catch (broadcastErr) {
+                console.error('[緊急廣播] broadcast 失敗:', broadcastErr?.message);
+              }
+
+              // IoT E 指令：寫入 iot_commands 表，Arduino 輪詢 Supabase 後執行
+              try {
+                await supabase
+                  .from('iot_commands')
+                  .update({ current_command: 'E' })
+                  .eq('id', 1);
+              } catch (iotErr) {
+                console.error('[IoT] 寫入 iot_commands 失敗:', iotErr?.message);
+              }
+
+              await safeReplyMessage(replyToken, userId, { type: 'text', text: '✅ 已確認發布，緊急事件通知已廣播給所有住戶。' });
+            } else {
+              await safeReplyMessage(replyToken, userId, { type: 'text', text: `❌ 已駁回此緊急事件，不會進行廣播。\n類型：${incident.event_type}` });
+            }
+            continue;
+          } catch (err) {
+            console.error('[Emergency Review] 處理失敗:', err?.message, err?.stack);
+            await safeReplyMessage(replyToken, userId, { type: 'text', text: '❌ 審核處理失敗，請稍後再試。' });
+            continue;
+          }
+        }
+
         // ===== 處理緊急事件審核（committee） =====
         if ((action === 'approve' || action === 'reject') && emergencyEventId) {
+          const safeEventId = String(emergencyEventId).trim();
           try {
+            console.log(`[${BOT_TAG}] [緊急審核] 開始 — action=${action} eventId=${safeEventId} userId=${userId}`);
+
             // 檢查操作者是否為管委會（committee）
             const { data: adminProfile, error: adminProfileErr } = await supabase
               .from('profiles')
@@ -3326,7 +3765,7 @@ export async function POST(req) {
               continue;
             }
 
-            if (!adminProfile || adminProfile.role !== 'committee') {
+            if (!adminProfile || !['committee', 'admin'].includes(adminProfile.role)) {
               await safeReplyMessage(replyToken, userId, {
                 type: 'text',
                 text: '⛔ 您沒有審核權限。'
@@ -3334,56 +3773,52 @@ export async function POST(req) {
               continue;
             }
 
-            // 讀取事件
-            const { data: emergencyEvent, error: eventQueryErr } = await supabase
+            // 預先查詢 incident 狀態（避免 atomic update 返回 0 rows 的 RLS 誤判）
+            const { data: preIncident, error: preErr } = await supabase
               .from('emergency_incidents')
-              .select('id, event_type, location, description, image_url, status, source_record_id')
-              .eq('id', emergencyEventId)
+              .select('id, event_type, location, description, image_url, status, reporter_line_user_id')
+              .eq('id', safeEventId)
               .maybeSingle();
 
-            if (eventQueryErr || !emergencyEvent) {
-              console.error('[Emergency Review] 查詢事件失敗:', eventQueryErr);
-              await safeReplyMessage(replyToken, userId, {
-                type: 'text',
-                text: '⚠️ 找不到此緊急事件，可能已被處理。'
-              });
+            console.log(`[${BOT_TAG}] [緊急審核] pre-fetch status="${preIncident?.status}" err=${preErr?.message}`);
+
+            if (preErr || !preIncident) {
+              await safeReplyMessage(replyToken, userId, { type: 'text', text: '⚠️ 找不到此緊急事件，可能已被處理。' });
               continue;
             }
 
-            if (emergencyEvent.status !== 'submitted') {
-              const statusLabelMap = {
-                approved: '已發布',
-                rejected: '已駁回',
-                submitted: '待審核',
-                draft: '編輯中',
-                pending: '待審核'
-              };
-              const currentStatusLabel = statusLabelMap[emergencyEvent.status] || emergencyEvent.status;
-
-              let duplicateReviewMessage = `ℹ️ 此事件目前為「${currentStatusLabel}」，無法重複審核。`;
-              if (action === 'approve' && emergencyEvent.status === 'approved') {
-                duplicateReviewMessage = 'ℹ️ 此事件已發布，無需重複確認。';
-              } else if (action === 'reject' && emergencyEvent.status === 'rejected') {
-                duplicateReviewMessage = 'ℹ️ 此事件已駁回，無需重複操作。';
-              }
-
-              await safeReplyMessage(replyToken, userId, {
-                type: 'text',
-                text: duplicateReviewMessage
-              });
+            const rawStatus = String(preIncident.status || '').trim();
+            const terminalStatuses = ['approved', '已發布', 'rejected', '已駁回'];
+            if (terminalStatuses.includes(rawStatus)) {
+              let dupMsg = `ℹ️ 此事件目前為「${rawStatus}」，無法重複審核。`;
+              if (action === 'approve' && (rawStatus === 'approved' || rawStatus === '已發布')) dupMsg = 'ℹ️ 此事件已發布，無需重複確認。';
+              else if (action === 'reject' && (rawStatus === 'rejected' || rawStatus === '已駁回')) dupMsg = 'ℹ️ 此事件已駁回，無需重複操作。';
+              await safeReplyMessage(replyToken, userId, { type: 'text', text: dupMsg });
               continue;
             }
 
+            // 自我審核防護：回報者不能審核自己提交的緊急事件
+            if (preIncident.reporter_line_user_id && preIncident.reporter_line_user_id === userId) {
+              await safeReplyMessage(replyToken, userId, { type: 'text', text: '⛔ 您不能審核自己提交的緊急事件。' });
+              continue;
+            }
+
+            // 原子條件更新（status 已知為可審核，防止競爭條件）
             const newStatus = action === 'approve' ? 'approved' : 'rejected';
-            const { error: updateErr } = await supabase
+            const { data: updatedRows, error: updateErr } = await supabase
               .from('emergency_incidents')
               .update({
                 status: newStatus,
-                reviewed_by: adminProfile.id,
-                reviewed_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
               })
-              .eq('id', emergencyEventId);
+              .eq('id', safeEventId)
+              .neq('status', 'approved')
+              .neq('status', '已發布')
+              .neq('status', 'rejected')
+              .neq('status', '已駁回')
+              .select('id, event_type, location, description, image_url');
+
+            console.log(`[${BOT_TAG}] [緊急審核] 原子更新結果: rows=${updatedRows?.length ?? 0} err=${updateErr?.message}`);
 
             if (updateErr) {
               console.error('[Emergency Review] 更新狀態失敗:', updateErr);
@@ -3394,6 +3829,31 @@ export async function POST(req) {
               continue;
             }
 
+            if (!updatedRows || updatedRows.length === 0) {
+              // 0 rows → 競爭條件（pre-check 後被其他請求搶先更新），或 RLS 阻擋
+              console.warn(`[${BOT_TAG}] [緊急審核] 更新返回 0 rows（eventId=${safeEventId}）。可能是競爭條件或 RLS 阻擋，請確認 SUPABASE_SERVICE_ROLE_KEY 是否已設置。`);
+              const { data: cur } = await supabase
+                .from('emergency_incidents')
+                .select('status')
+                .eq('id', safeEventId)
+                .maybeSingle();
+              if (!cur) {
+                await safeReplyMessage(replyToken, userId, { type: 'text', text: '⚠️ 找不到此緊急事件，可能已被處理。' });
+              } else {
+                const st = String(cur.status || '');
+                const isTerminalSt = ['approved', '已發布', 'rejected', '已駁回'].includes(st);
+                let dupMsg;
+                if (action === 'approve' && (st === 'approved' || st === '已發布')) dupMsg = 'ℹ️ 此事件已發布，無需重複確認。';
+                else if (action === 'reject' && (st === 'rejected' || st === '已駁回')) dupMsg = 'ℹ️ 此事件已駁回，無需重複操作。';
+                else if (isTerminalSt) dupMsg = `ℹ️ 此事件目前為「${st}」，無法重複審核。`;
+                else dupMsg = `❌ 審核操作失敗（當前狀態：${st}），請確認系統權限（SUPABASE_SERVICE_ROLE_KEY）後重試。`;
+                await safeReplyMessage(replyToken, userId, { type: 'text', text: dupMsg });
+              }
+              continue;
+            }
+
+            const emergencyEvent = updatedRows[0];
+
             // 確認發布 -> 廣播給所有住戶
             if (action === 'approve') {
               const broadcastText =
@@ -3403,18 +3863,33 @@ export async function POST(req) {
                 `描述：${emergencyEvent.description || '未提供'}\n\n` +
                 `請住戶留意安全並配合現場指示。`;
 
-              if (emergencyEvent.image_url) {
-                await client.broadcast([
-                  { type: 'text', text: broadcastText },
-                  {
-                    type: 'image',
-                    originalContentUrl: emergencyEvent.image_url,
-                    previewImageUrl: emergencyEvent.image_url
-                  }
-                ]);
-              } else {
-                await client.broadcast({ type: 'text', text: broadcastText });
+              const broadcastMsgs = emergencyEvent.image_url
+                ? [
+                    { type: 'text', text: broadcastText },
+                    { type: 'image', originalContentUrl: emergencyEvent.image_url, previewImageUrl: emergencyEvent.image_url }
+                  ]
+                : [{ type: 'text', text: broadcastText }];
+
+              try {
+                console.log(`[${BOT_TAG}] [緊急廣播] 打 broadcast 給所有 BOT1 好友`);
+                await client.broadcast(broadcastMsgs);
+                console.log(`[${BOT_TAG}] [緊急廣播] BOT1 broadcast 成功`);
+              } catch (broadcastErr) {
+                console.error('[緊急廣播] BOT1 broadcast 失敗:', broadcastErr?.response?.data || broadcastErr?.message);
               }
+
+              // IoT E 指令：透過 /api/iot 觸發警報（含 service_role key 及 5 秒自動重設）
+              try {
+                const iotUrl = new URL('/api/iot', req.url);
+                await fetch(iotUrl.toString(), {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ cmd: 'E', related_type: 'emergency', related_id: String(safeEventId) })
+                });
+              } catch (iotErr) {
+                console.error('[IoT] E 指令失敗:', iotErr?.message);
+              }
+
               await safeReplyMessage(replyToken, userId, {
                 type: 'text',
                 text: '✅ 已確認發布，緊急事件通知已廣播給所有住戶。'
@@ -3437,14 +3912,941 @@ export async function POST(req) {
             continue;
           }
         }
-        
+
+        // ===== 處理管理費查詢 postback =====
+        if (action === 'fee_latest') {
+          console.log('[分流:管理費] 最新一筆', { userId });
+          try {
+            let profileForFee = existingProfile;
+
+            if (!profileForFee?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForFee = { ...existingProfile, ...profileWithUnit };
+              }
+            }
+
+            if (!profileForFee?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定。'
+              });
+              continue;
+            }
+
+            const { data: latestFee, error: feeError } = await supabase
+              .from('fees')
+              .select('*')
+              .eq('unit_id', profileForFee.unit_id)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (feeError || !latestFee) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '💰 目前查不到您的管理費資料。'
+              });
+              continue;
+            }
+
+            const { data: unitData } = await supabase
+              .from('units')
+              .select('unit_number, unit_code')
+              .eq('id', profileForFee.unit_id)
+              .maybeSingle();
+
+            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
+            const amountText = latestFee.amount != null ? `NT$ ${latestFee.amount}` : '未提供';
+            const dueDate = latestFee.due ? new Date(latestFee.due) : null;
+            const dueText = dueDate && !Number.isNaN(dueDate.getTime())
+              ? dueDate.toLocaleDateString('zh-TW')
+              : (latestFee.due || '未提供');
+            const feeStatusText = latestFee.paid === true
+              ? '✅ 已繳費'
+              : latestFee.paid === false
+                ? '🟡 未繳費'
+                : (latestFee.status ? `ℹ️ ${latestFee.status}` : '未提供');
+            const invoiceText = latestFee.invoice ? latestFee.invoice : '未提供';
+
+            const latestFeeFlex = {
+              type: 'flex',
+              altText: '💰 最新一筆管理費',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '💰 您最新一筆管理費資訊',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'box',
+                      layout: 'vertical',
+                      spacing: 'sm',
+                      contents: [
+                        {
+                          type: 'box',
+                          layout: 'horizontal',
+                          contents: [
+                            { type: 'text', text: '房號', size: 'sm', weight: 'bold', flex: 2 },
+                            { type: 'text', text: roomText, size: 'sm', align: 'end', flex: 3 }
+                          ]
+                        },
+                        {
+                          type: 'box',
+                          layout: 'horizontal',
+                          contents: [
+                            { type: 'text', text: '金額', size: 'sm', weight: 'bold', flex: 2 },
+                            { type: 'text', text: amountText, size: 'sm', align: 'end', flex: 3, color: '#E74C3C' }
+                          ]
+                        },
+                        {
+                          type: 'box',
+                          layout: 'horizontal',
+                          contents: [
+                            { type: 'text', text: '到期日', size: 'sm', weight: 'bold', flex: 2 },
+                            { type: 'text', text: dueText, size: 'sm', align: 'end', flex: 3 }
+                          ]
+                        },
+                        {
+                          type: 'box',
+                          layout: 'horizontal',
+                          contents: [
+                            { type: 'text', text: '繳費狀態', size: 'sm', weight: 'bold', flex: 2 },
+                            { type: 'text', text: feeStatusText, size: 'sm', align: 'end', flex: 3 }
+                          ]
+                        },
+                        {
+                          type: 'box',
+                          layout: 'horizontal',
+                          contents: [
+                            { type: 'text', text: '發票', size: 'sm', weight: 'bold', flex: 2 },
+                            { type: 'text', text: invoiceText, size: 'sm', align: 'end', flex: 3 }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'link',
+                      height: 'sm',
+                      action: {
+                        type: 'uri',
+                        label: '🌐 查看完整繳費紀錄',
+                        uri: 'https://zdx3399.vercel.app/'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+
+            await client.replyMessage(replyToken, latestFeeFlex);
+          } catch (err) {
+            console.error('❌ 最新一筆查詢失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+        if (action === 'fee_history') {
+          console.log('[分流:管理費] 繳費紀錄', { userId });
+          try {
+            let profileForFee = existingProfile;
+
+            if (!profileForFee?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForFee = { ...existingProfile, ...profileWithUnit };
+              }
+            }
+
+            if (!profileForFee?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定。'
+              });
+              continue;
+            }
+
+            // 查詢最近 12 個月 (按 due 日期倒序)
+            const { data: feeHistory, error: feeError } = await supabase
+              .from('fees')
+              .select('*')
+              .eq('unit_id', profileForFee.unit_id)
+              .order('due', { ascending: false })
+              .limit(12);
+
+            if (feeError) {
+              throw feeError;
+            }
+
+            if (!feeHistory || feeHistory.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '💰 目前查不到您的管理費紀錄。'
+              });
+              continue;
+            }
+
+            // 構建繳費紀錄清單文本
+            let historyListText = '';
+            feeHistory.forEach((fee, idx) => {
+              const dueDate = fee.due ? new Date(fee.due) : null;
+              const dueText = dueDate && !Number.isNaN(dueDate.getTime())
+                ? dueDate.toLocaleDateString('zh-TW')
+                : (fee.due || '未提供');
+              const status = fee.paid === true ? '✅ 已繳' : '🟡 未繳';
+              const monthText = fee.due ? new Date(fee.due).toLocaleDateString('zh-TW', { year: '2-digit', month: '2-digit' }).replace(/\//g, '/') : '未提供';
+              historyListText += `${idx + 1}. ${monthText}  NT$ ${fee.amount}  ${status}\n`;
+            });
+
+            const historyFlex = {
+              type: 'flex',
+              altText: '📊 繳費紀錄',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '📊 繳費紀錄（最近 12 個月）',
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: historyListText.trim(),
+                      size: 'sm',
+                      wrap: true,
+                      color: '#333333'
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'link',
+                      height: 'sm',
+                      action: {
+                        type: 'uri',
+                        label: '🌐 查看更多歷史',
+                        uri: 'https://zdx3399.vercel.app/'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+
+            await client.replyMessage(replyToken, historyFlex);
+          } catch (err) {
+            console.error('❌ 繳費紀錄查詢失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+        if (action === 'fee_unpaid') {
+          console.log('[分流:管理費] 所有未繳', { userId });
+          try {
+            let profileForFee = existingProfile;
+
+            if (!profileForFee?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForFee = { ...existingProfile, ...profileWithUnit };
+              }
+            }
+
+            if (!profileForFee?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定。'
+              });
+              continue;
+            }
+
+            const { data: unpaidFees, error: feeError } = await supabase
+              .from('fees')
+              .select('*')
+              .eq('unit_id', profileForFee.unit_id)
+              .eq('paid', false)
+              .order('due', { ascending: true });
+
+            if (feeError) {
+              throw feeError;
+            }
+
+            // 沒有未繳費的情況
+            if (!unpaidFees || unpaidFees.length === 0) {
+              const noUnpaidFlex = {
+                type: 'flex',
+                altText: '✅ 未繳費查詢',
+                contents: {
+                  type: 'bubble',
+                  body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    spacing: 'md',
+                    contents: [
+                      {
+                        type: 'text',
+                        text: '✅ 您目前沒有未繳管理費',
+                        weight: 'bold',
+                        size: 'lg',
+                        wrap: true,
+                        color: '#10B981'
+                      },
+                      { type: 'separator', margin: 'md' },
+                      {
+                        type: 'text',
+                        text: '感謝您的配合！',
+                        size: 'sm',
+                        color: '#666666',
+                        wrap: true
+                      }
+                    ]
+                  },
+                  footer: {
+                    type: 'box',
+                    layout: 'vertical',
+                    spacing: 'sm',
+                    contents: [
+                      {
+                        type: 'button',
+                        style: 'link',
+                        height: 'sm',
+                        action: {
+                          type: 'uri',
+                          label: '🌐 查看完整繳費紀錄',
+                          uri: 'https://zdx3399.vercel.app/'
+                        }
+                      }
+                    ]
+                  }
+                }
+              };
+
+              await client.replyMessage(replyToken, noUnpaidFlex);
+              continue;
+            }
+
+            // 有未繳費的情況
+            const totalAmount = unpaidFees.reduce((sum, fee) => sum + (fee.amount || 0), 0);
+
+            // 構建未繳費清單文本
+            let unpaidListText = '';
+            unpaidFees.forEach((fee, idx) => {
+              const dueDate = fee.due ? new Date(fee.due) : null;
+              const dueText = dueDate && !Number.isNaN(dueDate.getTime())
+                ? dueDate.toLocaleDateString('zh-TW')
+                : (fee.due || '未提供');
+              const monthText = fee.due ? new Date(fee.due).toLocaleDateString('zh-TW', { year: '2-digit', month: '2-digit' }).replace(/\//g, '/') : '未提供';
+              unpaidListText += `${String.fromCharCode(9312 + idx)} ${monthText}  NT$ ${fee.amount}  到期日：${dueText}\n`;
+            });
+
+            const unpaidFlex = {
+              type: 'flex',
+              altText: '🟡 未繳費查詢',
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: `💰 您有 ${unpaidFees.length} 筆未繳管理費`,
+                      weight: 'bold',
+                      size: 'lg',
+                      wrap: true
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'text',
+                      text: unpaidListText.trim(),
+                      size: 'sm',
+                      wrap: true,
+                      color: '#333333'
+                    },
+                    { type: 'separator', margin: 'md' },
+                    {
+                      type: 'box',
+                      layout: 'horizontal',
+                      spacing: 'md',
+                      contents: [
+                        {
+                          type: 'text',
+                          text: '合計：',
+                          size: 'sm',
+                          weight: 'bold',
+                          flex: 0
+                        },
+                        {
+                          type: 'text',
+                          text: `NT$ ${totalAmount}`,
+                          size: 'sm',
+                          weight: 'bold',
+                          align: 'end',
+                          color: '#E74C3C'
+                        }
+                      ]
+                    }
+                  ]
+                },
+                footer: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'button',
+                      style: 'primary',
+                      color: '#3498DB',
+                      action: {
+                        type: 'postback',
+                        label: '📄 查看最新一筆',
+                        data: 'action=fee_latest',
+                        displayText: '查看最新一筆'
+                      }
+                    },
+                    {
+                      type: 'button',
+                      style: 'link',
+                      height: 'sm',
+                      action: {
+                        type: 'uri',
+                        label: '🌐 查看完整繳費紀錄',
+                        uri: 'https://zdx3399.vercel.app/'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+
+            await client.replyMessage(replyToken, unpaidFlex);
+          } catch (err) {
+            console.error('❌ 未繳費查詢失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+        if (action === 'fee_all') {
+          console.log('[分流:管理費] 全部記錄', { userId });
+          try {
+            let profileForFee = existingProfile;
+
+            if (!profileForFee?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForFee = { ...existingProfile, ...profileWithUnit };
+              }
+            }
+
+            if (!profileForFee?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定。'
+              });
+              continue;
+            }
+
+            const { data: allFees, error: feeError } = await supabase
+              .from('fees')
+              .select('*')
+              .eq('unit_id', profileForFee.unit_id)
+              .order('created_at', { ascending: false })
+              .limit(10);
+
+            if (feeError) {
+              throw feeError;
+            }
+
+            if (!allFees || allFees.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '💰 目前查不到您的管理費資料。'
+              });
+              continue;
+            }
+
+            const { data: unitData } = await supabase
+              .from('units')
+              .select('unit_number, unit_code')
+              .eq('id', profileForFee.unit_id)
+              .maybeSingle();
+
+            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
+
+            let allText = `📊 管理費記錄（最近 10 筆）\n房號：${roomText}\n\n`;
+            
+            allFees.forEach((fee, idx) => {
+              const dueDate = fee.due ? new Date(fee.due) : null;
+              const dueText = dueDate && !Number.isNaN(dueDate.getTime())
+                ? dueDate.toLocaleDateString('zh-TW')
+                : (fee.due || '未提供');
+              const status = fee.paid === true ? '✅ 已繳' : '🟡 未繳';
+              allText += `${idx + 1}. NT$ ${fee.amount} - ${dueText} ${status}\n`;
+            });
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: allText
+            });
+          } catch (err) {
+            console.error('❌ 全部記錄查詢失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+        if (action === 'repair_start') {
+          console.log('[分流:報修] 啟動報修流程', { userId });
+          // 直接啟動報修流程（同「報修」指令）
+          const oldSession = repairSessions.get(userId);
+          if (oldSession) {
+            console.log('[報修] 偵測到舊 session，將被覆蓋:', oldSession);
+          }
+          
+          await closeMaintenanceDraft(userId, 'rejected');
+          await supabase
+            .from('emergency_incidents')
+            .update({ status: 'rejected', updated_at: new Date().toISOString() })
+            .eq('source', 'line_session')
+            .eq('reporter_line_user_id', userId)
+            .eq('status', 'draft');
+          
+          repairSessions.set(userId, {
+            location: null,
+            description: null,
+            startTime: Date.now(),
+            dbId: null
+          });
+
+          try {
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '📍 請輸入地點'
+            });
+            usedReplyTokens.add(replyToken);
+          } catch (replyErr) {
+            console.error('[報修] ❌ 啟動流程失敗:', replyErr.message);
+          }
+          continue;
+        }
+
+        if (action === 'repair_status') {
+          console.log('[分流:報修] 查看報修狀態', { userId });
+          try {
+            if (!existingProfile?.id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定，暫時無法查詢報修狀態。'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            const { data: repairs, error } = await supabase
+              .from('maintenance')
+              .select('id, status, created_at, equipment, item, description')
+              .eq('reported_by_id', existingProfile.id)
+              .in('status', ['open', 'progress', 'closed'])
+              .order('created_at', { ascending: false })
+              .limit(5);
+
+            if (error || !repairs || repairs.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '📋 您目前沒有報修記錄\n\n輸入「報修」可以開始新的報修'
+              });
+              usedReplyTokens.add(replyToken);
+              continue;
+            }
+
+            const statusEmoji = {
+              open: '🟡 待處理',
+              progress: '🔵 處理中',
+              closed: '✅ 已完成'
+            };
+
+            let recordsText = '📋 您的報修狀態（最近5筆）\n\n';
+            repairs.forEach((repair, index) => {
+              const date = new Date(repair.created_at).toLocaleString('zh-TW', { 
+                month: '2-digit', 
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+              recordsText += `${index + 1}. 編號 #${String(repair.id).slice(0, 8)}\n`;
+              recordsText += `   ${statusEmoji[repair.status] || repair.status}\n`;
+              recordsText += `   ${repair.equipment || '未提供地點'}\n`;
+              recordsText += `   ${(repair.item || '一般報修')} - ${(repair.description || '未提供描述')}\n`;
+              recordsText += `   ${date}\n\n`;
+            });
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: recordsText
+            });
+            usedReplyTokens.add(replyToken);
+          } catch (err) {
+            console.error('[報修] 查詢狀態失敗:', err);
+            if (!usedReplyTokens.has(replyToken)) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 查詢失敗，請稍後再試。'
+              });
+              usedReplyTokens.add(replyToken);
+            }
+          }
+          continue;
+        }
+
+        if (action === 'package_pending') {
+          console.log('[分流:包裹] 待領取', { userId });
+          try {
+            let profileForPackage = existingProfile;
+
+            if (!profileForPackage?.unit_id) {
+              const { data: profileWithUnit } = await supabase
+                .from('profiles')
+                .select('id, name, unit_id')
+                .eq('line_user_id', userId)
+                .maybeSingle();
+
+              if (profileWithUnit) {
+                profileForPackage = { ...existingProfile, ...profileWithUnit };
+              }
+            }
+
+            if (!profileForPackage?.unit_id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定。'
+              });
+              continue;
+            }
+
+            const { data: pendingPackages, error: pkgError } = await supabase
+              .from('packages')
+              .select('id, courier, tracking_number, arrived_at')
+              .eq('unit_id', profileForPackage.unit_id)
+              .eq('status', 'pending')
+              .order('arrived_at', { ascending: false });
+
+            if (pkgError) {
+              throw pkgError;
+            }
+
+            if (!pendingPackages || pendingPackages.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '✅ 您目前沒有待領取的包裹，感謝您的配合！'
+              });
+              continue;
+            }
+
+            const { data: unitData } = await supabase
+              .from('units')
+              .select('unit_number, unit_code')
+              .eq('id', profileForPackage.unit_id)
+              .maybeSingle();
+
+            const roomText = unitData?.unit_number || unitData?.unit_code || '未提供';
+
+            let pendingText = `🟡 待領取包裹（共 ${pendingPackages.length} 筆）\n`;
+            pendingText += `房號：${roomText}\n\n`;
+            
+            pendingPackages.forEach((pkg, idx) => {
+              const arrivedDate = pkg.arrived_at ? new Date(pkg.arrived_at) : null;
+              const arrivedText = arrivedDate && !Number.isNaN(arrivedDate.getTime())
+                ? arrivedDate.toLocaleString('zh-TW', { hour12: false })
+                : (pkg.arrived_at || '未提供');
+              pendingText += `${idx + 1}. 快遞：${pkg.courier || '未提供'}\n`;
+              pendingText += `   到件時間：${arrivedText}\n`;
+              if (pkg.tracking_number) {
+                pendingText += `   追蹤號：${pkg.tracking_number}\n`;
+              }
+            });
+
+            pendingText += '\n📦 請儘早至管理室領取，謝謝！';
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: pendingText
+            });
+          } catch (err) {
+            console.error('❌ 待領取包裹查詢失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          continue;
+        }
+
+        // ===== 投票查詢：最新一筆 =====
+        if (action === 'vote_latest') {
+          console.log('\n✅ [投票防護] Postback 進入 vote_latest 分支');
+          console.log('[分流:投票] 查看最新一筆', { userId });
+          try {
+            const { data: latestVote, error: voteQueryError } = await supabase
+              .from('votes')
+              .select('id, title, description, vote_url, created_at, ends_at, status, options')
+              .eq('status', 'active')
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (voteQueryError) {
+              console.error('❌ 查詢最新投票失敗:', voteQueryError);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 查詢最新投票失敗，請稍後再試。'
+              });
+              continue;
+            }
+
+            if (!latestVote) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '📭 目前沒有進行中的投票。'
+              });
+              continue;
+            }
+
+            // 檢查用戶是否已投票
+            const { data: userVoteRecord } = await supabase
+              .from('vote_records')
+              .select('id')
+              .eq('vote_id', latestVote.id)
+              .eq('user_id', existingProfile?.id)
+              .maybeSingle();
+
+            const hasVoted = !!userVoteRecord;
+
+            let optionsText = '未提供';
+            if (Array.isArray(latestVote.options) && latestVote.options.length > 0) {
+              optionsText = latestVote.options.join('、');
+            } else if (typeof latestVote.options === 'string' && latestVote.options.trim()) {
+              optionsText = latestVote.options;
+            }
+
+            const createdAtText = latestVote.created_at
+              ? new Date(latestVote.created_at).toLocaleString('zh-TW', { hour12: false })
+              : '未提供';
+            const endsAtText = latestVote.ends_at
+              ? new Date(latestVote.ends_at).toLocaleString('zh-TW', { hour12: false })
+              : '未設定';
+
+            const statusEmoji = hasVoted ? '✅ 已投票' : '🗳️ 未投票';
+
+            let voteMessage = `${statusEmoji} 最新投票\n\n`;
+            voteMessage += `標題：${latestVote.title || '未提供'}\n`;
+            voteMessage += `狀態：🟢 進行中\n`;
+            voteMessage += `選項：${optionsText}\n`;
+            voteMessage += `建立時間：${createdAtText}\n`;
+            voteMessage += `截止時間：${endsAtText}\n`;
+            if (latestVote.description) {
+              voteMessage += `說明：${latestVote.description}\n`;
+            }
+            if (latestVote.vote_url) {
+              voteMessage += `\n投票連結：${latestVote.vote_url}`;
+            }
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: voteMessage
+            });
+            console.log('✅ [投票防護] 回覆已送出，即將執行 continue 防護');
+          } catch (err) {
+            console.error('❌ 查詢最新投票失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          console.log('✅ [投票防護] vote_latest 完成，執行 continue ✓✓✓');
+          continue;
+        }
+
+        // ===== 投票查詢：期限內未投的 =====
+        if (action === 'vote_not_voted') {
+          console.log('\n✅ [投票防護] Postback 進入 vote_not_voted 分支');
+          console.log('[分流:投票] 查看期限內未投的', { userId });
+          try {
+            if (!existingProfile?.id) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '⚠️ 尚未完成住戶綁定，暫時無法查詢投票狀態。\n請先完成 LINE 帳號綁定後再試一次。'
+              });
+              continue;
+            }
+
+            // 查詢所有進行中且未過期的投票
+            const now = new Date().toISOString();
+            const { data: activeVotes, error: votesQueryError } = await supabase
+              .from('votes')
+              .select('id, title, description, vote_url, created_at, ends_at, status, options')
+              .eq('status', 'active')
+              .gt('ends_at', now)
+              .order('ends_at', { ascending: true })
+              .limit(10);
+
+            if (votesQueryError) {
+              console.error('❌ 查詢投票列表失敗:', votesQueryError);
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '❌ 查詢投票列表失敗，請稍後再試。'
+              });
+              continue;
+            }
+
+            if (!activeVotes || activeVotes.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '📭 目前沒有進行中的投票。'
+              });
+              continue;
+            }
+
+            // 檢查用戶已投過的投票
+            const { data: userVoteRecords } = await supabase
+              .from('vote_records')
+              .select('vote_id')
+              .eq('user_id', existingProfile.id);
+
+            const votedVoteIds = new Set(userVoteRecords?.map(r => r.vote_id) || []);
+
+            // 篩選出未投的投票
+            const notVotedVotes = activeVotes.filter(v => !votedVoteIds.has(v.id));
+
+            if (notVotedVotes.length === 0) {
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '✅ 您已投過所有期限內的投票，感謝參與！'
+              });
+              continue;
+            }
+
+            let votesText = `📝 期限內未投的投票（共 ${notVotedVotes.length} 筆）\n\n`;
+
+            notVotedVotes.forEach((vote, idx) => {
+              const endsAt = vote.ends_at ? new Date(vote.ends_at) : null;
+              const endsAtText = endsAt && !Number.isNaN(endsAt.getTime())
+                ? endsAt.toLocaleString('zh-TW', { hour12: false })
+                : (vote.ends_at || '未設定');
+
+              votesText += `${idx + 1}. ${vote.title || '未提供'}\n`;
+              votesText += `   截止：${endsAtText}\n`;
+              if (vote.description) {
+                votesText += `   說明：${vote.description}\n`;
+              }
+              if (vote.vote_url) {
+                votesText += `   投票連結：${vote.vote_url}\n`;
+              }
+              votesText += '\n';
+            });
+
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: votesText
+            });
+            console.log('✅ [投票防護] 回覆已送出，即將執行 continue 防護');
+          } catch (err) {
+            console.error('❌ 查詢未投票列表失敗:', err);
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❌ 查詢失敗，請稍後再試。'
+            });
+          }
+          console.log('✅ [投票防護] vote_not_voted 完成，執行 continue ✓✓✓');
+          continue;
+        }
+
+
         // ===== 處理澄清選項 =====
         if (action === 'clarify') {
           const clarifyValue = params.get('value');
           console.log('[DEBUG Postback] clarifyValue:', clarifyValue);
           
           try {
+            // 檢查是否為投票查詢，若是則跳過 LLM
+            const cleanClarify = String(clarifyValue || '').replace(/[\s\n\r,，.。:：;；!！?？]/g, '').toLowerCase();
+            const pollKeywords = ['投票','投票查詢','投票結果','查詢投票','vote','poll'];
+            const isPollClarify = pollKeywords.some(k => cleanClarify.includes(k));
+            if (isPollClarify) {
+              console.log('[AI查詢] 偵測為投票查詢，跳過 AI 回答');
+              await client.replyMessage(replyToken, {
+                type: 'text',
+                text: '已偵測為投票查詢，系統不會呼叫 AI。如需查詢投票結果請使用系統提供的「投票查詢」功能或聯絡管理員。'
+              });
+              continue;
+            }
+
             // 直接呼叫 chat 函數處理澄清選項
+            console.log('[AI查詢] clarify 即將進入 LLM', { userId, clarifyValue, branch: 'clarify' });
             const result = await chat(clarifyValue);
             
             // 根據結果建立回覆訊息（帶回饋按鈕）
@@ -3593,4 +4995,3 @@ export async function POST(req) {
 export async function GET() {
   return new Response('Method Not Allowed', { status: 405 });
 }
-
